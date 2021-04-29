@@ -81,6 +81,7 @@ public float get_piston_position(IMyPistonBase piston) {
     return float.Parse(pistonDist[0]);
 }
 
+// TODO Detect if piston is positive or negative
 class Pistons {
     public List<IMyPistonBase> list;
     public float pos;
@@ -267,7 +268,7 @@ class Miner {
                     }
                 }
             } else {
-                if(x != max_y) {
+                if(x != max_x) {
                     return EXTEND_X;
                 } else {
                     if(y != 0) {
@@ -359,7 +360,7 @@ public Program() {
     this.containers = new Containers(this);
     this.refineries = new Refineries(this);
     this.miners = new List<Miner>();
-    Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+    Runtime.UpdateFrequency |= UpdateFrequency.Update100;
 }
 
 public bool should_start() {
@@ -387,10 +388,9 @@ public void InitMiners(string name_prefix, float velocity, float step, float dep
     }
 }
 
-public void Main(string argument)
-{
-    var args = argument.Split(' ').ToList();
+public void Main(string argument) {
     if(this.miners.Count == 0){
+        var args = argument.Split(' ').ToList();
         if (args.Count >= 3) {
             var name_prefix = args[0];
             var velocity = float.Parse(args[1]);
