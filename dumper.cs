@@ -25,7 +25,9 @@ public void InitDumpers(string name_prefix) {
     Echo("Search for " + name_prefix);
     GridTerminalSystem.SearchBlocksOfName(name_prefix, list);
     foreach (var block in list) {
-        this.dumpers.Add((IMyShipConnector)block);
+        if(block.CustomName == name_prefix) {
+            this.dumpers.Add((IMyShipConnector)block);
+        }
     }
     Echo("Found " + list.Count);
 }
