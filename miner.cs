@@ -241,6 +241,7 @@ public class Miner {
         this.Name = name;
         this.Arm = new Arm(program, name);
         this.Drill = drill;
+        this.Drill.Enabled = true;
         this.Velocity = new Vector3D(velocity, velocity/2.0, velocity);
         this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, velocity);
         this.Step = step;
@@ -271,7 +272,6 @@ public class Miner {
                     return EXTEND_X;
                 } else {
                     if(y != max_y) {
-                        Echo("1");
                         return EXTEND_Y;
                     } else {
                         return EXTEND_Z;
@@ -282,7 +282,6 @@ public class Miner {
                     return RETRACT_X;
                 } else {
                     if(y != max_y) {
-                        Echo("2");
                         return EXTEND_Y;
                     } else {
                         return EXTEND_Z;
@@ -314,7 +313,7 @@ public class Miner {
         }
     }
 
-    public void run() {
+    public void Run() {
         this.Refresh();
         var move = this.SelectMove();
         this.last_move = move;
@@ -487,7 +486,7 @@ public void Main(string argument) {
 
     var i = 0;
     foreach(var miner in this.miners) {
-        miner.run();
+        miner.Run();
         miner.Print();
         i++;
     }
