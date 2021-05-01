@@ -58,143 +58,161 @@ class Refineries {
     }
 }
 
-public List<IMyPistonBase> get_pistons(string name) {
-    var ret = new List<IMyPistonBase>();
-    var list = new List<IMyTerminalBlock>();
-    GridTerminalSystem.SearchBlocksOfName(name, list);
-    foreach (var block in list) {
-        ret.Add(block as IMyPistonBase);
+public class StraightArm {
+    List<IMyPistonBase> positive;
+    List<IMyPistonBase> negative;
+    public double Max;
+    public double Pos;
+    public StraightArm(List<IMyPistonBase> positive, List<IMyPistonBase> negative) {
+        this.positive = positive;
+        this.negative = negative;
+        this.Max = 0.0;
+        foreach(var piston in this.positive) {
+            piston.Enabled = true;
+            this.Max += piston.HighestPosition;
+        }
+        foreach(var piston in this.negative) {
+            piston.Enabled = true;
+            this.Max += piston.HighestPosition;
+        }
     }
-    return ret;
+
+    public bool Empty() {
+        return this.positive.Count + this.negative.Count == 0;
+    }
+
+    public void Refresh() {
+        this.Pos = 0.0;
+        foreach(var piston in this.positive) {
+            this.Pos += piston.CurrentPosition;
+        }
+        foreach(var piston in this.negative) {
+            this.Pos += piston.HighestPosition - piston.CurrentPosition;
+        }
+    }
+
+    public void Move(double pos, double speed) {
+        var current_pos = this.Pos;
+        List<IMyPistonBase> to_extend;
+        List<IMyPistonBase> to_retract;
+        double needed;
+        if(pos > current_pos) {
+            needed = pos - current_pos;
+            to_extend = this.positive;
+            to_retract = this.negative;
+        } else if(current_pos > pos) {
+            needed = current_pos - pos;
+            to_extend = this.negative;
+            to_retract = this.positive;
+        } else {
+            return;
+        }
+
+        foreach(var piston in to_extend) {
+            if(piston.CurrentPosition < piston.HighestPosition) {
+                piston.MaxLimit = (float)Math.Min(piston.HighestPosition, piston.CurrentPosition + needed);
+                piston.Velocity = (float)speed;
+                return;
+            }
+        }
+
+        foreach(var piston in to_retract) {
+            if(piston.CurrentPosition > piston.LowestPosition) {
+                piston.MinLimit = (float)Math.Max(piston.LowestPosition, piston.CurrentPosition - needed);
+                piston.Velocity = (float)-speed;
+                return;
+            }
+        }
+    }
+
+    public void Start() {
+        foreach(var piston in this.positive) {
+            piston.Enabled = true;
+        }
+        foreach(var piston in this.negative) {
+            piston.Enabled = true;
+        }
+    }
+
+    public void Stop() {
+        foreach(var piston in this.positive) {
+            piston.Enabled = false;
+        }
+        foreach(var piston in this.negative) {
+            piston.Enabled = false;
+        }
+    }
 }
 
-public float get_piston_position(IMyPistonBase piston) {
-    var pistonInf = piston.DetailedInfo;
+public class Arm {
+    public StraightArm X;
+    public StraightArm Y;
+    public StraightArm Z;
+    public Vector3D Pos;
+    public Vector3D Max;
 
-    //splits the string into an array by separating by the ':' character
-    string[] pistInfArr = (pistonInf.Split(':'));
+    public Arm(Program program, string name) {
+        var x_pos = new List<IMyPistonBase>();
+        var x_neg = new List<IMyPistonBase>();
+        var y_pos = new List<IMyPistonBase>();
+        var y_neg = new List<IMyPistonBase>();
+        var z_pos = new List<IMyPistonBase>();
+        var z_neg = new List<IMyPistonBase>();
 
-    // splits the resulting 0.0m into an array with single index of "0.0" by again splitting by character "m"
-    string[] pistonDist = (pistInfArr[1].Split('m'));
-
-    //uses double.Parse method to parse the "0.0" into a usable double of value 0.0
-    return float.Parse(pistonDist[0]);
-}
-
-// TODO Detect if piston is positive or negative
-class Pistons {
-    public List<IMyPistonBase> list;
-    public float pos;
-    public int pos_i;
-    public float max;
-    public int max_i;
-    public Program program;
-    public bool precise_position;
-    float velocity;
-    float step;
-
-    public Pistons(Program program, string name, bool precise_position, float velocity, float step) {
-        // program.Echo("Loading " + name);
-        this.program = program;
-        this.list = program.get_pistons(name);
-        this.pos = 0.0f;
-        this.precise_position = precise_position;
-        this.velocity = velocity;
-        this.step = step;
-        // program.Echo("pos: " + this.pos + " | max_i: " + this.max);
-        // program.Echo("pos_i: " + this.pos_i + " | max_i: " + this.max_i);
-        this.pos = 0.0f;
-        this.max = 0.0f;
-        this.pos_i = 0;
-        this.max_i = 0;
-        foreach(var piston in this.list) {
-            this.max += (float)piston.HighestPosition;
-        }
-        this.refresh();
-        foreach(var piston in this.list) {
-            if(this.precise_position) {
-                var pos_i = Convert.ToInt32(Math.Floor(piston.CurrentPosition / step));
-                piston.MaxLimit = (float)(pos_i + 1) * step;
-                piston.MinLimit = (float)pos_i * step;
-            } else {
-                piston.MaxLimit = 10.0f;
-                piston.MinLimit = 0.0f;
+        var list = new List<IMyPistonBase>();
+        program.GridTerminalSystem.GetBlocksOfType<IMyPistonBase>(list);
+        foreach(var piston in list) {
+            if(piston.CustomName == name + " X+") {
+                x_pos.Add(piston);
+            } else if(piston.CustomName == name + " X-") {
+                x_neg.Add(piston);
+            } else if(piston.CustomName == name + " Y+") {
+                y_pos.Add(piston);
+            } else if(piston.CustomName == name + " Y-") {
+                y_neg.Add(piston);
+            } else if(piston.CustomName == name + " Z+") {
+                z_pos.Add(piston);
+            } else if(piston.CustomName == name + " Z-") {
+                z_neg.Add(piston);
             }
         }
+
+        this.X = new StraightArm(x_pos, x_neg);
+        this.Y = new StraightArm(y_pos, y_neg);
+        this.Z = new StraightArm(z_pos, z_neg);
+        this.Pos = new Vector3D(0.0, 0.0, 0.0);
+        this.Max = new Vector3D(this.X.Max, this.Y.Max, this.Z.Max);
     }
 
-    public void refresh() {
-        this.pos = 0.0f;
-        for(var i = 0; i < this.list.Count; i++) {
-            var p = this.list[i];
-            // var pos = program.get_piston_position(p);
-            var pos = p.CurrentPosition;
-            this.pos += pos;
-            // p.GetActionWithName("OnOff_Off").Apply(p);
-            // program.Echo(name + "[" + i + "] = " + pos + " " + p.CustomName);
-        }
-        this.pos_i = Convert.ToInt32(Math.Floor(this.pos / step));
-        this.max_i = Convert.ToInt32(Math.Floor(this.max / step));
+    public bool Empty() {
+        return this.X.Empty() && this.Y.Empty() && this.Z.Empty();
     }
 
-    public void extend() {
-        var target = (float)(this.pos_i + 1) * this.step;
-        var missing = target - this.pos;
-        foreach(var p in this.list) {
-            // this.program.Echo("Status: "+ p.Status);
-            var pos = this.program.get_piston_position(p);
-            if(this.precise_position) {
-                p.Velocity = this.velocity;
-                p.GetActionWithName("OnOff_On").Apply(p);
-                p.MaxLimit = Math.Min(pos + missing, 10.0f);
-                this.program.Echo("target: " + target + " | missing: " + missing + " | pos: " + pos + " | set limit: " + p.MaxLimit);
-                missing -= p.MaxLimit - pos;
-                if(missing < 0.00000001f) {
-                    return;
-                }
-            } else {
-                if(pos <= 9.95f) {
-                    p.Velocity = this.velocity;
-                    return;
-                }
-            }
-        }
+    public void Refresh() {
+        this.X.Refresh();
+        this.Y.Refresh();
+        this.Z.Refresh();
+        this.Pos.X = this.X.Pos;
+        this.Pos.Y = this.Y.Pos;
+        this.Pos.Z = this.Z.Pos;
     }
 
-    public void retract() {
-        var target = (float)(this.pos_i - 1) * this.step;
-        var missing = target - this.pos;
-        foreach(var p in this.list) {
-            // this.program.Echo("Status: "+ p.Status);
-            var pos = this.program.get_piston_position(p);
-            if(this.precise_position) {
-                p.Velocity = -this.velocity;
-                p.GetActionWithName("OnOff_On").Apply(p);
-                p.MinLimit = Math.Max(pos + missing, 0.0f);
-                this.program.Echo("target: " + target + " | missing: " + missing + " | pos: " + pos + " | set limit: " + p.MinLimit);
-                missing -= p.MinLimit - pos;
-                if(missing > -0.00000001f) {
-                    return;
-                }
-            } else {
-                if(pos > 0.05f) {
-                    p.Velocity = -this.velocity;
-                    return;
-                }
-            }
-        }
+    public void Move(Vector3D pos, Vector3D speed) {
+        this.X.Move(pos.X, speed.X);
+        this.Y.Move(pos.Y, speed.Y);
+        this.Z.Move(pos.Z, speed.Z);
     }
 
-    public void stop() {
-        foreach(var p in this.list) {
-            p.GetActionWithName("OnOff_Off").Apply(p);
-        }
+    public void Start() {
+        this.X.Start();
+        this.Y.Start();
+        this.Z.Start();
     }
 
-    public void start() {
-        foreach(var p in this.list) {
-            p.GetActionWithName("OnOff_On").Apply(p);
-        }
+    public void Stop() {
+        this.X.Stop();
+        this.Y.Stop();
+        this.Z.Stop();
     }
 }
 
@@ -204,42 +222,56 @@ public const int EXTEND_Z = 2;
 public const int RETRACT_X = 3;
 public const int RETRACT_Y = 4;
 public const int RETRACT_Z = 5;
+public const int CENTERING = 6;
 
-class Miner {
-    Pistons x_pistons;
-    Pistons y_pistons;
-    Pistons z_pistons;
+public class Miner {
+    public Arm Arm;
+    public Vector3I PosI;
+    public Vector3I MaxI;
+    public IMyShipDrill Drill;
+    Program Program;
     int last_move;
-    public Miner(Program program, string name, float velocity, float step, float depth_step) {
-        this.x_pistons = new Pistons(program, name + " X", false, velocity, step);
-        this.y_pistons = new Pistons(program, name + " Y", true, velocity, step);
-        this.z_pistons = new Pistons(program, name + " Z", true, velocity, depth_step);
+    Vector3D Velocity;
+    Vector3D VelocitySlow;
+    float Step;
+    float DepthStep;
+    string Name;
+    public Miner(Program program, string name, IMyShipDrill drill, float velocity, float step, float depth_step) {
+        this.Program = program;
+        this.Name = name;
+        this.Arm = new Arm(program, name);
+        this.Drill = drill;
+        this.Velocity = new Vector3D(velocity, velocity/2.0, velocity);
+        this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, velocity);
+        this.Step = step;
+        this.DepthStep = depth_step;
         this.last_move = 0;
+        this.MaxI.X = (int)((this.Arm.Max.X + this.Step - 1.0) / this.Step);
+        this.MaxI.Y = (int)((this.Arm.Max.Y + this.Step - 1.0) / this.Step);
+        this.MaxI.Z = (int)((this.Arm.Max.Z + this.DepthStep - 1.0) / this.DepthStep);
     }
 
-    public int NbPistons() {
-        return this.x_pistons.list.Count + this.y_pistons.list.Count + this.z_pistons.list.Count;
-    }
-
-    public void refresh() {
-        this.x_pistons.refresh();
-        this.y_pistons.refresh();
-        this.z_pistons.refresh();
+    public void Refresh() {
+        this.Arm.Refresh();
+        this.PosI.X = (int)(this.Arm.Pos.X / this.Step);
+        this.PosI.Y = (int)(this.Arm.Pos.Y / this.Step);
+        this.PosI.Z = (int)(this.Arm.Pos.Z / this.DepthStep);
     }
 
     public int SelectMove() {
-        int x = x_pistons.pos_i;
-        int y = y_pistons.pos_i;
-        int z = z_pistons.pos_i;
-        int max_x = x_pistons.max_i;
-        int max_y = y_pistons.max_i;
-        int max_z = z_pistons.max_i;
+        int x = this.PosI.X;
+        int y = this.PosI.Y;
+        int z = this.PosI.Z;
+        int max_x = this.MaxI.X;
+        int max_y = this.MaxI.Y;
+        int max_z = this.MaxI.Z;
         if(z % 2 == 0) {
             if(y % 2 == 0) {
                 if(x != max_x) {
                     return EXTEND_X;
                 } else {
                     if(y != max_y) {
+                        Echo("1");
                         return EXTEND_Y;
                     } else {
                         return EXTEND_Z;
@@ -250,6 +282,7 @@ class Miner {
                     return RETRACT_X;
                 } else {
                     if(y != max_y) {
+                        Echo("2");
                         return EXTEND_Y;
                     } else {
                         return EXTEND_Z;
@@ -282,72 +315,99 @@ class Miner {
     }
 
     public void run() {
-        this.refresh();
+        this.Refresh();
         var move = this.SelectMove();
         this.last_move = move;
+
+        var dst = new Vector3D(this.Arm.Pos.X, this.Arm.Pos.Y, this.Arm.Pos.Z);
         switch(move) {
             case EXTEND_X:
-                x_pistons.extend();
+                dst.X = this.Arm.X.Max;
                 break;
             case EXTEND_Y:
-                y_pistons.extend();
+                dst.Y = (double)(this.PosI.Y + 1) * this.Step;
                 break;
             case EXTEND_Z:
-                z_pistons.extend();
+                dst.Z = (double)(this.PosI.Z + 1) * this.DepthStep;
                 break;
             case RETRACT_X:
-                x_pistons.retract();
+                dst.X = 0.0;
                 break;
             case RETRACT_Y:
-                y_pistons.retract();
+                dst.Y = (double)(this.PosI.Y - 1) * this.Step;
                 break;
             case RETRACT_Z:
-                z_pistons.retract();
+                dst.Z = (double)(this.PosI.Z - 1) * this.DepthStep;
                 break;
             default:
                 break;
         }
+        var velocity = this.Velocity;
+        if(move == EXTEND_X || move == RETRACT_X) {
+            if(this.PosI.Y == 0 || this.PosI.Y == this.MaxI.Y) {
+                velocity = this.VelocitySlow;
+            }
+        }
+        this.Arm.Move(dst, velocity);
     }
 
-    public void start() {
-        this.x_pistons.start();
-        this.y_pistons.start();
-        this.z_pistons.start();
+    public void Start() {
+        this.Arm.Start();
     }
 
-    public void stop() {
-        this.x_pistons.stop();
-        this.y_pistons.stop();
-        this.z_pistons.stop();
+    public void Stop() {
+        this.Arm.Stop();
     }
 
-    public void print(Program program) {
-        program.Echo("X: " + this.x_pistons.pos + "/" + this.x_pistons.max + " | I: " + this.x_pistons.pos_i + "/" + this.x_pistons.max_i);
-        program.Echo("Y: " + this.y_pistons.pos + "/" + this.y_pistons.max + " | I: " + this.y_pistons.pos_i + "/" + this.y_pistons.max_i);
-        program.Echo("Z: " + this.z_pistons.pos + "/" + this.z_pistons.max + " | I: " + this.z_pistons.pos_i + "/" + this.z_pistons.max_i);
+    public void Print() {
+        Echo("X: " + this.Arm.X.Pos + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
+        Echo("Y: " + this.Arm.Y.Pos + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
+        Echo("Z: " + this.Arm.Z.Pos + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
         switch(this.last_move) {
             case EXTEND_X:
-                program.Echo("Moving: X+");
+                Echo("Moving: X+");
                 break;
             case EXTEND_Y:
-                program.Echo("Moving: Y+");
+                Echo("Moving: Y+");
                 break;
             case EXTEND_Z:
-                program.Echo("Moving: Z+");
+                Echo("Moving: Z+");
                 break;
             case RETRACT_X:
-                program.Echo("Moving: X-");
+                Echo("Moving: X-");
                 break;
             case RETRACT_Y:
-                program.Echo("Moving: Y-");
+                Echo("Moving: Y-");
                 break;
             case RETRACT_Z:
-                program.Echo("Moving: Z-");
+                Echo("Moving: Z-");
                 break;
             default:
                 break;
         }
     }
+
+    public void Echo(string s) {
+        this.Program.Echo(this.Name + ": " + s);
+    }
+}
+
+public Miner GetMiner(string name, float velocity, float step, float depth_step) {
+    var list = new List<IMyShipDrill>();
+    GridTerminalSystem.GetBlocksOfType<IMyShipDrill>(list);
+    foreach(var drill in list) {
+        if(drill.CustomName == name) {
+            var miner = new Miner(this, name, drill, velocity, step, depth_step);
+            if(miner.Arm.Empty()) {
+                Echo(name + " has no arm. Not a miner.");
+                return null;
+            } else {
+                return miner;
+            }
+        }
+    }
+    Echo("Could not find any drill for " + name);
+    return null;
 }
 
 Containers containers;
@@ -380,9 +440,9 @@ public bool should_start() {
 
 public void InitMiners(string name_prefix, float velocity, float step, float depth_step) {
     for(var i = 0; i < 100; i++) {
-        var miner = new Miner(this, name_prefix + " " + i, velocity, step, depth_step);
-        if(miner.NbPistons() == 0) {
-            break;
+        var miner = GetMiner(name_prefix + " " + i, velocity, step, depth_step);
+        if(miner == null) {
+            return;
         }
         this.miners.Add(miner);
     }
@@ -397,6 +457,10 @@ public void Main(string argument) {
             var step = float.Parse(args[2]);
             var depth_step = float.Parse(args[3]);
             InitMiners(name_prefix, velocity, step, depth_step);
+            if(this.miners.Count == 0) {
+                Echo("Could not find any miner");
+                return;
+            }
         } else {
             Echo("Missing arguments: " + args.Count + " < 3");
             Runtime.UpdateFrequency &= ~UpdateFrequency.Update100;
@@ -409,14 +473,14 @@ public void Main(string argument) {
     if(this.mining && !should_start) {
         Echo("Auto Paused");
         foreach(var miner in this.miners) {
-            miner.stop();
+            miner.Stop();
         }
         this.mining = false;
         return;
     } else if(!this.mining && should_start) {
         Echo("Auto Start");
         foreach(var miner in this.miners) {
-            miner.start();
+            miner.Start();
         }
         this.mining = true;
     }
@@ -424,8 +488,7 @@ public void Main(string argument) {
     var i = 0;
     foreach(var miner in this.miners) {
         miner.run();
-        Echo("Miner " + i + ":");
-        miner.print(this);
+        miner.Print();
         i++;
     }
     Echo("Volume: " + this.refineries.CurrentVolume() + this.containers.OreVolume() + "/" + this.refineries.MaxVolume);
