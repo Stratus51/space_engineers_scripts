@@ -422,15 +422,21 @@ public Program() {
     Runtime.UpdateFrequency |= UpdateFrequency.Update100;
 }
 
-public bool should_start() {
+double Fill() {
     var fill = this.refineries.CurrentVolume() + this.containers.OreVolume();
-    var threshold = (MyFixedPoint)0.4;
+    return (double)fill/(double)this.refineries.MaxVolume;
+}
+
+double fill;
+public bool should_start() {
+    this.fill = Fill();
+    var threshold = 0.4;
     if(this.mining) {
-        threshold = (MyFixedPoint)0.6;
+        threshold = 0.6;
     }
     // Echo("Refinery: " + this.refineries.CurrentVolume() + " | containers: " + this.containers.OreVolume());
     // Echo("fill: " + fill + " | threshold: " + this.refineries.MaxVolume * threshold);
-    if(fill > this.refineries.MaxVolume * threshold) {
+    if(this.fill > threshold) {
         return false;
     } else {
         return true;
@@ -445,6 +451,25 @@ public void InitMiners(string name_prefix, float velocity, float step, float dep
         }
         this.miners.Add(miner);
     }
+}
+
+public double Progress() {
+    var tot = 0.0;
+    var consumed = 0.0;
+    foreach(var miner in this.miners) {
+        tot += miner.Arm.Max.X * miner.Arm.Max.Y * miner.Arm.Max.Z;
+        consumed += miner.Arm.Pos.Z * miner.Arm.Max.X * miner.Arm.Max.Y + miner.Arm.Pos.Y * miner.Arm.Max.X + miner.Arm.Pos.X;
+    }
+    return consumed/tot;
+}
+
+public void UpdateProgressScreen() {
+    var progress = Progress();
+    IMyTextSurface surface = Me.GetSurface(0);
+    surface.ContentType = ContentType.TEXT_AND_IMAGE;
+    surface.FontSize = 2;
+    surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
+    surface.WriteText("Progress: " + progress + "%\nRefineries: " + this.fill + "%");
 }
 
 public void Main(string argument) {
@@ -491,4 +516,6 @@ public void Main(string argument) {
         i++;
     }
     Echo("Volume: " + this.refineries.CurrentVolume() + this.containers.OreVolume() + "/" + this.refineries.MaxVolume);
+
+    UpdateProgressScreen();
 }
