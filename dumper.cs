@@ -23,10 +23,10 @@ class Sources {
 public void InitDumpers(string name_prefix) {
     var list = new List<IMyTerminalBlock>();
     Echo("Search for " + name_prefix);
-    GridTerminalSystem.SearchBlocksOfName(name_prefix, list);
+    GridTerminalSystem.GetBlocksOfType<IMyShipConnector>(list);
     foreach (var block in list) {
         if(block.CustomName == name_prefix) {
-            this.dumpers.Add((IMyShipConnector)block);
+            this.dumpers.Add(block);
         }
     }
     Echo("Found " + list.Count);

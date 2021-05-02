@@ -1,8 +1,11 @@
 class Containers {
+    Program Program;
     public List<IMyCargoContainer> list;
     public MyFixedPoint MaxVolume;
     public List<string> Ores;
+    public List<MyItemType> OresType;
     public Containers(Program program) {
+        this.Program = program;
         this.MaxVolume = (MyFixedPoint)0.0;
         this.list = new List<IMyCargoContainer>();
         var list = new List<IMyTerminalBlock>();
@@ -13,6 +16,10 @@ class Containers {
             this.MaxVolume += refinery.GetInventory().MaxVolume;
         }
         this.Ores = new List<string>(){ "Stone", "Iron", "Nickel", "Silicon", "Cobalt", "Magnesium", "Silver","Gold", "Uranium", "Platinum"};
+        this.OresType = new List<MyItemType>();
+        foreach(var ore in this.Ores) {
+            this.OresType.Add(MyItemType.MakeOre(ore));
+        }
     }
 
     public MyFixedPoint GetItemAmount(MyItemType itemType) {
@@ -25,9 +32,8 @@ class Containers {
 
     public MyFixedPoint OreVolume() {
         MyFixedPoint ret = (MyFixedPoint)0.0;
-        foreach(var ore in this.Ores) {
-            var ty = MyItemType.MakeOre(ore);
-            ret += this.GetItemAmount(ty);
+        foreach(var ore in this.OresType) {
+            ret += this.GetItemAmount(ore);
         }
         return ret * (MyFixedPoint)0.37;
     }
@@ -359,9 +365,9 @@ public class Miner {
     }
 
     public void Print() {
-        Echo("X: " + this.Arm.X.Pos + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
-        Echo("Y: " + this.Arm.Y.Pos + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
-        Echo("Z: " + this.Arm.Z.Pos + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
+        Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
+        Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
+        Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
         switch(this.last_move) {
             case EXTEND_X:
                 Echo("Moving: X+");
@@ -419,24 +425,28 @@ public Program() {
     this.containers = new Containers(this);
     this.refineries = new Refineries(this);
     this.miners = new List<Miner>();
+
+    IMyTextSurface surface = Me.GetSurface(0);
+    surface.ContentType = ContentType.TEXT_AND_IMAGE;
+    surface.FontSize = 2;
+    surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
+
     Runtime.UpdateFrequency |= UpdateFrequency.Update100;
 }
 
-double Fill() {
-    var fill = this.refineries.CurrentVolume() + this.containers.OreVolume();
-    return (double)fill/(double)this.refineries.MaxVolume;
+double UsedVolume;
+double UsedVolumePercent;
+void Refresh() {
+    this.UsedVolume = (double)(this.refineries.CurrentVolume() + this.containers.OreVolume());
+    this.UsedVolumePercent = this.UsedVolume / (double)this.refineries.MaxVolume;
 }
 
-double fill;
 public bool should_start() {
-    this.fill = Fill();
     var threshold = 0.4;
     if(this.mining) {
         threshold = 0.6;
     }
-    // Echo("Refinery: " + this.refineries.CurrentVolume() + " | containers: " + this.containers.OreVolume());
-    // Echo("fill: " + fill + " | threshold: " + this.refineries.MaxVolume * threshold);
-    if(this.fill > threshold) {
+    if(this.UsedVolumePercent > threshold) {
         return false;
     } else {
         return true;
@@ -458,18 +468,19 @@ public double Progress() {
     var consumed = 0.0;
     foreach(var miner in this.miners) {
         tot += miner.Arm.Max.X * miner.Arm.Max.Y * miner.Arm.Max.Z;
-        consumed += miner.Arm.Pos.Z * miner.Arm.Max.X * miner.Arm.Max.Y + miner.Arm.Pos.Y * miner.Arm.Max.X + miner.Arm.Pos.X;
+        consumed += miner.Arm.Pos.Z * miner.Arm.Max.X * miner.Arm.Max.Y;
     }
     return consumed/tot;
 }
 
 public void UpdateProgressScreen() {
-    var progress = Progress();
+    var progress = Progress() * 100;
     IMyTextSurface surface = Me.GetSurface(0);
-    surface.ContentType = ContentType.TEXT_AND_IMAGE;
-    surface.FontSize = 2;
-    surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
-    surface.WriteText("Progress: " + progress + "%\nRefineries: " + this.fill + "%");
+    var lines = new string[] {
+        "Progress: " + progress.ToString("0.000") + "%",
+        "Refineries: " + (this.UsedVolumePercent * 100.0).ToString("0.000") + "%",
+    };
+    surface.WriteText(String.Join("\n", lines));
 }
 
 public void Main(string argument) {
@@ -491,31 +502,39 @@ public void Main(string argument) {
             return;
         }
     }
+    this.Refresh();
 
     var should_start = this.should_start();
     Echo("Should start " + should_start + " | mining: " + this.mining);
-    if(this.mining && !should_start) {
-        Echo("Auto Paused");
-        foreach(var miner in this.miners) {
-            miner.Stop();
+    if(should_start) {
+        if(!this.mining) {
+            Echo("Auto Start");
+            foreach(var miner in this.miners) {
+                miner.Start();
+            }
+            this.mining = true;
         }
-        this.mining = false;
-        return;
-    } else if(!this.mining && should_start) {
-        Echo("Auto Start");
-        foreach(var miner in this.miners) {
-            miner.Start();
+    } else {
+        if(this.mining) {
+            Echo("Auto Paused");
+            foreach(var miner in this.miners) {
+                miner.Stop();
+            }
+            this.mining = false;
         }
-        this.mining = true;
     }
 
     var i = 0;
     foreach(var miner in this.miners) {
-        miner.Run();
+        if(this.mining) {
+            miner.Run();
+        } else {
+            miner.Refresh();
+        }
         miner.Print();
         i++;
     }
-    Echo("Volume: " + this.refineries.CurrentVolume() + this.containers.OreVolume() + "/" + this.refineries.MaxVolume);
+    Echo("Volume: " + this.UsedVolume.ToString("0.0") + "/" + this.refineries.MaxVolume);
 
     UpdateProgressScreen();
 }
