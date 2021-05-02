@@ -227,12 +227,20 @@ public Welder GetWelder(string name) {
     return null;
 }
 
+public const int EXTEND_X = 0;
+public const int EXTEND_Y = 1;
+public const int RETRACT_X = 3;
+public const int RETRACT_Y = 4;
+public const int PARKING = 5;
+
 public class DepthSensors {
     public Program Program;
     public IMySensorBlock XPos;
     public IMySensorBlock XNeg;
     public IMySensorBlock YPos;
     public IMySensorBlock YNeg;
+    public float SensorToWelderDist;
+    public float CubeSize;
 
     List<IMySensorBlock> sensors;
 
@@ -243,6 +251,8 @@ public class DepthSensors {
         this.YPos = YPos;
         this.YNeg = YNeg;
         this.sensors = new List<IMySensorBlock>(){ XPos, XNeg, YPos, YNeg };
+        this.CubeSize = XPos.CubeGrid.GridSize;
+        this.SensorToWelderDist = this.CubeSize * 1.5f;
         foreach(var sensor in this.sensors) {
             sensor.DetectPlayers = false;
             sensor.DetectFloatingObjects = false;
@@ -260,7 +270,7 @@ public class DepthSensors {
             sensor.LeftExtend = 0.0f;
             sensor.RightExtend = 0.0f;
             sensor.TopExtend = 0.0f;
-            sensor.BottomExtend = 1.5f + 2.5f;
+            sensor.BottomExtend = this.SensorToWelderDist + 0.5f;
             sensor.FrontExtend = 0.0f;
             sensor.BackExtend = 0.0f;
         }
@@ -268,7 +278,42 @@ public class DepthSensors {
 
     public void SetRange(float range) {
         foreach(var sensor in this.sensors) {
-            sensor.BottomExtend = 1.2f + 2.5f + range;
+            sensor.FrontExtend = 0.0f;
+            sensor.BottomExtend = this.SensorToWelderDist + range;
+            sensor.LeftExtend = 0.0f;
+            sensor.RightExtend = 0.0f;
+        }
+    }
+
+    public void SideDetection(int direction, float range) {
+        foreach(var s in this.sensors) {
+            s.BottomExtend = 0.0f;
+            s.FrontExtend = 0.0f;
+            s.LeftExtend = 0.0f;
+            s.RightExtend = 0.0f;
+        }
+        IMySensorBlock sensor = null;
+        switch(direction) {
+            case EXTEND_X:
+                sensor = this.XPos;
+                break;
+            case EXTEND_Y:
+                sensor = this.YPos;
+                break;
+            case RETRACT_X:
+                sensor = this.XNeg;
+                break;
+            case RETRACT_Y:
+                sensor = this.YNeg;
+                break;
+            default:
+                break;
+        }
+        if(sensor != null) {
+            sensor.FrontExtend = range;
+            sensor.BottomExtend = this.SensorToWelderDist;
+            sensor.LeftExtend = this.CubeSize/2;
+            sensor.RightExtend = this.CubeSize/2;
         }
     }
 
@@ -344,12 +389,6 @@ public DepthSensors GetDepthSensors(string name) {
     }
 }
 
-public const int EXTEND_X = 0;
-public const int EXTEND_Y = 1;
-public const int RETRACT_X = 3;
-public const int RETRACT_Y = 4;
-public const int PARKING = 5;
-
 public const float LONG_RANGE = 2.0f;
 public const float MID_RANGE = 1.0f;
 public const float SHORT_RANGE = 0.5f;
@@ -370,6 +409,8 @@ public class AutoWelder {
     int RemainingWeld;
     Vector3D NextPos;
     double Step;
+    float MidRange;
+    float WeldDistance;
 
     enum State {
         ExtendingFast,
@@ -383,8 +424,9 @@ public class AutoWelder {
         Parked,
     }
     State state;
+    State NextState;
 
-    public AutoWelder(Program program, string name, Welder welder, DepthSensors sensors, Vector3D velocity, int duration, double step) {
+    public AutoWelder(Program program, string name, Welder welder, DepthSensors sensors, Vector3D velocity, int duration, double step, double weld_distance) {
         this.Program = program;
         this.Welder = welder;
         this.Sensors = sensors;
@@ -405,6 +447,8 @@ public class AutoWelder {
         this.Min.Z = (double)this.MinI.Z * this.Step;
         this.Welder.Arm.Start();
         this.Sensors.SetRange(LONG_RANGE);
+        this.WeldDistance = (float)weld_distance;
+        this.MidRange = Math.Max((float)weld_distance, MID_RANGE);
     }
 
     public void Refresh() {
@@ -443,10 +487,9 @@ public class AutoWelder {
         }
     }
 
-    public Vector3D? GetNextPos() {
+    public Vector3D? NextPosFromMove(int move) {
         var arm = this.Welder.Arm;
         var dst = new Vector3D(arm.Pos.X, arm.Pos.Y, arm.Pos.Z);
-        var move = this.SelectMove();
         switch(move) {
             case EXTEND_X:
                 dst.X = (double)(this.PosI.X + 1) * this.Step;
@@ -481,7 +524,7 @@ public class AutoWelder {
                     arm.Move(dst, this.Fast);
                 } else {
                     this.state = State.Extending;
-                    this.Sensors.SetRange(MID_RANGE);
+                    this.Sensors.SetRange(this.MidRange);
                     arm.Move(dst, this.MidVelocity);
                 }
                 break;
@@ -491,7 +534,7 @@ public class AutoWelder {
                     arm.Move(dst, this.MidVelocity);
                 } else {
                     this.state = State.ExtendingSlow;
-                    this.Sensors.SetRange(SHORT_RANGE);
+                    this.Sensors.SetRange(this.WeldDistance);
                     arm.Move(dst, this.Velocity);
                 }
                 break;
@@ -503,7 +546,18 @@ public class AutoWelder {
                     this.state = State.Welding;
                     this.RemainingWeld = this.WeldDuration;
                     this.Welder.welder.Enabled = true;
-                    this.Sensors.SetRange(LONG_RANGE);
+
+                    var move = this.SelectMove();
+                    var next_pos = this.NextPosFromMove(move);
+                    if(next_pos != null) {
+                        this.NextPos = (Vector3D)next_pos;
+                    }
+                    if(move == PARKING) {
+                        this.NextState = State.ParkingRetracting;
+                    } else {
+                        this.NextState = State.Moving;
+                    }
+                    this.Sensors.SideDetection(move, (float)this.Step);
                     arm.Stop();
                 }
                 break;
@@ -512,23 +566,16 @@ public class AutoWelder {
                 if(this.RemainingWeld <= 0) {
                     this.state = State.Retracting;
                     arm.Start();
-                    arm.Move(dst, this.Velocity);
                     this.Welder.welder.Enabled = false;
                 }
                 break;
             case State.Retracting:
-                if(dst.Z > 0.0) {
+                if(dst.Z > 0.0 && this.Sensors.IsActive()) {
                     dst.Z = 0.0;
                     arm.Move(dst, this.Fast);
                 } else {
-                    var next_pos = this.GetNextPos();
-                    if(next_pos == null) {
-                        this.state = State.ParkingRetracting;
-                    } else {
-                        this.NextPos = (Vector3D)next_pos;
-                        this.state = State.Moving;
-                        arm.Move(this.NextPos, this.Fast);
-                    }
+                    this.state = this.NextState;
+                    this.NextPos.Z = dst.Z;
                 }
                 break;
             case State.Moving:
@@ -536,13 +583,15 @@ public class AutoWelder {
                     this.state = State.Extending;
                 } else {
                     arm.Move(this.NextPos, this.Fast);
+                    this.Sensors.SetRange(LONG_RANGE);
                 }
                 break;
             case State.ParkingRetracting:
                 if(arm.Pos.Z == 0.0) {
                     this.state = State.Parking;
                 } else {
-                    dst.Z = 0.0;
+                    dst.Z = Min.Z;
+                    Echo("Move " + dst + " " + this.Fast);
                     arm.Move(dst, this.Fast);
                 }
                 break;
@@ -576,19 +625,19 @@ public class AutoWelder {
     }
 }
 
-AutoWelder GetAutoWelder(string name, double velocity, int weld_duration, double step) {
+AutoWelder GetAutoWelder(string name, double velocity, int weld_duration, double step, double weld_distance) {
     var welder = GetWelder(name);
     var sensors = GetDepthSensors(name);
     if(welder == null || sensors == null) {
         return null;
     }
-    return new AutoWelder(this, name, welder, sensors, new Vector3D(velocity, velocity, velocity), weld_duration, step);
+    return new AutoWelder(this, name, welder, sensors, new Vector3D(velocity, velocity, velocity), weld_duration, step, weld_distance);
 }
 
 List<AutoWelder> auto_welders;
-public void InitAutoWelders(string name_prefix, double velocity, int weld_duration, double step) {
+public void InitAutoWelders(string name_prefix, double velocity, int weld_duration, double step, double weld_distance) {
     for(var i = 0; i < 100; i++) {
-        var auto_welder = GetAutoWelder(name_prefix + " " + i, velocity, weld_duration, step);
+        var auto_welder = GetAutoWelder(name_prefix + " " + i, velocity, weld_duration, step, weld_distance);
         if(auto_welder == null) {
             return;
         }
@@ -609,7 +658,8 @@ public void Main(string argument) {
             var velocity = double.Parse(args[1]);
             var weld_duration = int.Parse(args[2]);
             var step = double.Parse(args[3]);
-            InitAutoWelders(name_prefix, velocity, weld_duration, step);
+            var weld_distance = double.Parse(args[4]);
+            InitAutoWelders(name_prefix, velocity, weld_duration, step, weld_distance);
             if(this.auto_welders.Count > 0) {
                 Runtime.UpdateFrequency |= UpdateFrequency.Update10;
             }
