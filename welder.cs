@@ -653,7 +653,7 @@ public Program() {
 public void Main(string argument) {
     if(this.auto_welders.Count == 0) {
         var args = argument.Split(' ').ToList();
-        if (args.Count >= 2) {
+        if (args.Count >= 5) {
             var name_prefix = args[0];
             var velocity = double.Parse(args[1]);
             var weld_duration = int.Parse(args[2]);
@@ -664,7 +664,7 @@ public void Main(string argument) {
                 Runtime.UpdateFrequency |= UpdateFrequency.Update10;
             }
         } else {
-            Echo("Missing arguments: " + args.Count + " < 3");
+            Echo("Missing arguments: " + args.Count + " < 3\n" + argument);
             Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
             return;
         }
