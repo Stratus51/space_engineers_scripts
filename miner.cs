@@ -1,69 +1,3 @@
-class Containers {
-    Program Program;
-    public List<IMyCargoContainer> list;
-    public MyFixedPoint MaxVolume;
-    public List<string> Ores;
-    public List<MyItemType> OresType;
-    public Containers(Program program) {
-        this.Program = program;
-        this.MaxVolume = (MyFixedPoint)0.0;
-        this.list = new List<IMyCargoContainer>();
-        var list = new List<IMyTerminalBlock>();
-        program.GridTerminalSystem.GetBlocksOfType<IMyCargoContainer>(list);
-        foreach(var block in list) {
-            var refinery = (IMyCargoContainer)block;
-            this.list.Add(refinery);
-            this.MaxVolume += refinery.GetInventory().MaxVolume;
-        }
-        this.Ores = new List<string>(){ "Stone", "Iron", "Nickel", "Silicon", "Cobalt", "Magnesium", "Silver","Gold", "Uranium", "Platinum"};
-        this.OresType = new List<MyItemType>();
-        foreach(var ore in this.Ores) {
-            this.OresType.Add(MyItemType.MakeOre(ore));
-        }
-    }
-
-    public MyFixedPoint GetItemAmount(MyItemType itemType) {
-        MyFixedPoint ret = (MyFixedPoint)0.0;
-        foreach(var c in list) {
-            ret += c.GetInventory().GetItemAmount(itemType);
-        }
-        return ret;
-    }
-
-    public MyFixedPoint OreVolume() {
-        MyFixedPoint ret = (MyFixedPoint)0.0;
-        foreach(var ore in this.OresType) {
-            ret += this.GetItemAmount(ore);
-        }
-        return ret * (MyFixedPoint)0.37;
-    }
-}
-
-class Refineries {
-    public List<IMyRefinery> list;
-    public MyFixedPoint MaxVolume;
-    public Refineries(Program program) {
-        this.MaxVolume = (MyFixedPoint)0.0;
-        this.list = new List<IMyRefinery>();
-        var list = new List<IMyTerminalBlock>();
-        program.GridTerminalSystem.GetBlocksOfType<IMyRefinery>(list);
-        foreach(var block in list) {
-            var refinery = (IMyRefinery)block;
-            this.list.Add(refinery);
-            this.MaxVolume += refinery.InputInventory.MaxVolume;
-        }
-        this.MaxVolume *= (MyFixedPoint)1000.0;
-    }
-
-    public MyFixedPoint CurrentVolume() {
-        MyFixedPoint ret = (MyFixedPoint)0.0;
-        foreach(var refinery in this.list) {
-            ret += refinery.InputInventory.CurrentVolume;
-        }
-        return ret;
-    }
-}
-
 public enum SliderDirection {
     Positive,
     Negative,
@@ -912,7 +846,12 @@ public class Miner {
     float Step;
     float DepthStep;
     string Name;
-    public Miner(Program program, string name, List<IMyShipDrill> drills, float velocity, float step, float depth_step) {
+    float MaxVolume;
+    float MaxFill;
+    float MinFill;
+    bool Mining;
+
+    public Miner(Program program, string name, List<IMyShipDrill> drills, float velocity, float step, float depth_step, float max_fill, float min_fill) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, drills[0]);
@@ -925,6 +864,22 @@ public class Miner {
         this.MaxI.X = (int)((this.Arm.Max.X + this.Step - 1.0) / this.Step);
         this.MaxI.Y = (int)((this.Arm.Max.Y + this.Step - 1.0) / this.Step);
         this.MaxI.Z = (int)((this.Arm.Max.Z + this.DepthStep - 1.0) / this.DepthStep);
+        this.MaxFill = max_fill;
+        this.MinFill = min_fill;
+        this.Mining = false;
+
+        this.MaxVolume = 0.0f;
+        foreach(var drill in this.Drills) {
+            MaxVolume += (float)drill.GetInventory().MaxVolume;
+        }
+    }
+
+    public float CurrentVolume() {
+        var ret = 0.0f;
+        foreach(var drill in this.Drills) {
+            ret += (float)drill.GetInventory().CurrentVolume;
+        }
+        return ret;
     }
 
     public void Refresh() {
@@ -941,6 +896,8 @@ public class Miner {
         int max_x = this.MaxI.X;
         int max_y = this.MaxI.Y;
         int max_z = this.MaxI.Z;
+        Echo(x + ";" + y + ";" + z);
+        Echo(max_x + ";" + max_y + ";" + max_z);
         if(z % 2 == 0) {
             if(y % 2 == 0) {
                 if(x != max_x) {
@@ -989,7 +946,21 @@ public class Miner {
     }
 
     public void Run() {
-        this.Refresh();
+        if(this.Mining) {
+            if(this.CurrentVolume() >= this.MaxVolume * this.MaxFill) {
+                this.Stop();
+                this.Mining = false;
+                return;
+            }
+        } else {
+            if(this.CurrentVolume() <= this.MaxVolume * this.MinFill) {
+                this.Start();
+                this.Mining = true;
+            } else {
+                return;
+            }
+        }
+
         var move = this.SelectMove();
         this.last_move = move;
 
@@ -1045,27 +1016,31 @@ public class Miner {
         Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
         Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
         Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
-        switch(this.last_move) {
-            case EXTEND_X:
-                Echo("Moving: X+");
-                break;
-            case EXTEND_Y:
-                Echo("Moving: Y+");
-                break;
-            case EXTEND_Z:
-                Echo("Moving: Z+");
-                break;
-            case RETRACT_X:
-                Echo("Moving: X-");
-                break;
-            case RETRACT_Y:
-                Echo("Moving: Y-");
-                break;
-            case RETRACT_Z:
-                Echo("Moving: Z-");
-                break;
-            default:
-                break;
+        if(this.Mining) {
+            switch(this.last_move) {
+                case EXTEND_X:
+                    Echo("Moving: X+");
+                    break;
+                case EXTEND_Y:
+                    Echo("Moving: Y+");
+                    break;
+                case EXTEND_Z:
+                    Echo("Moving: Z+");
+                    break;
+                case RETRACT_X:
+                    Echo("Moving: X-");
+                    break;
+                case RETRACT_Y:
+                    Echo("Moving: Y-");
+                    break;
+                case RETRACT_Z:
+                    Echo("Moving: Z-");
+                    break;
+                default:
+                    break;
+            }
+        } else {
+            Echo("Stopped mining");
         }
     }
 
@@ -1074,6 +1049,8 @@ public class Miner {
     }
 }
 
+const float MaxFill = 0.20f;
+const float MinFill = 0.0f;
 public Miner GetMiner(string name, float velocity, float step, float depth_step) {
     var list = new List<IMyShipDrill>();
     GridTerminalSystem.GetBlocksOfType<IMyShipDrill>(list);
@@ -1088,7 +1065,7 @@ public Miner GetMiner(string name, float velocity, float step, float depth_step)
         return null;
     }
 
-    var miner = new Miner(this, name, drills, velocity, step, depth_step);
+    var miner = new Miner(this, name, drills, velocity, step, depth_step, MaxFill, MinFill);
     if(miner.Arm.Empty()) {
         Echo(name + " has no arm. Not a miner.");
         return null;
@@ -1097,15 +1074,8 @@ public Miner GetMiner(string name, float velocity, float step, float depth_step)
     }
 }
 
-Containers containers;
-Refineries refineries;
 List<Miner> miners;
-bool mining;
 public Program() {
-    this.mining = false;
-
-    this.containers = new Containers(this);
-    this.refineries = new Refineries(this);
     this.miners = new List<Miner>();
 
     IMyTextSurface surface = Me.GetSurface(0);
@@ -1114,25 +1084,6 @@ public Program() {
     surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
 
     Runtime.UpdateFrequency |= UpdateFrequency.Update100;
-}
-
-double UsedVolume;
-double UsedVolumePercent;
-void Refresh() {
-    this.UsedVolume = (double)(this.refineries.CurrentVolume() + this.containers.OreVolume());
-    this.UsedVolumePercent = this.UsedVolume / (double)this.refineries.MaxVolume;
-}
-
-public bool should_start() {
-    var threshold = 0.4;
-    if(this.mining) {
-        threshold = 0.6;
-    }
-    if(this.UsedVolumePercent > threshold) {
-        return false;
-    } else {
-        return true;
-    }
 }
 
 public void InitMiners(string name_prefix, float velocity, float step, float depth_step) {
@@ -1160,7 +1111,6 @@ public void UpdateProgressScreen() {
     IMyTextSurface surface = Me.GetSurface(0);
     var lines = new string[] {
         "Progress: " + progress.ToString("0.000") + "%",
-        "Refineries: " + (this.UsedVolumePercent * 100.0).ToString("0.000") + "%",
     };
     surface.WriteText(String.Join("\n", lines));
 }
@@ -1186,37 +1136,13 @@ public void Main(string argument) {
     }
     // this.Refresh();
 
-    var should_start = this.should_start();
-    Echo("Should start " + should_start + " | mining: " + this.mining);
-    if(should_start) {
-        if(!this.mining) {
-            Echo("Auto Start");
-            foreach(var miner in this.miners) {
-                miner.Start();
-            }
-            this.mining = true;
-        }
-    } else {
-        if(this.mining) {
-            Echo("Auto Paused");
-            foreach(var miner in this.miners) {
-                miner.Stop();
-            }
-            this.mining = false;
-        }
-    }
-
     var i = 0;
     foreach(var miner in this.miners) {
-        if(this.mining) {
-            miner.Run();
-        } else {
-            miner.Refresh();
-        }
+        miner.Refresh();
+        miner.Run();
         miner.Print();
         i++;
     }
-    Echo("Volume: " + this.UsedVolume.ToString("0.0") + "/" + this.refineries.MaxVolume);
 
     UpdateProgressScreen();
 }
