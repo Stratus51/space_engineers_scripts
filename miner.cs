@@ -120,291 +120,6 @@ public class Connectors {
     }
 }
 
-public class WeldingSlider: Slider {
-    public float Pos {get; set;}
-    public float Min {get;}
-    public float Max {get;}
-    public SliderDirection Direction {get;}
-
-    Program Program;
-    Slider[] Arms;
-    Connectors[] Links;
-    IMyCubeBlock Front;
-    Vector3D FrontDirection;
-    State state;
-    float Speed;
-
-    enum State {
-        Holding0,
-        Holding1,
-        SwitchingTo0,
-        SwitchingTo1,
-    }
-
-    public WeldingSlider(Program program, Slider[] arms, Connectors[] links, IMyCubeBlock front, SliderDirection direction, float min, float max) {
-        this.Program = program;
-        this.Direction = direction;
-        this.Arms = arms;
-        this.Links = links;
-        this.Front = front;
-        this.Min = min;
-        this.Max = max;
-        this.Speed = 0;
-
-        if(links[0].Status() == MyShipConnectorStatus.Connected) {
-            this.state = State.Holding0;
-        } else if(links[1].Status() == MyShipConnectorStatus.Connected) {
-            this.state = State.Holding1;
-        } else {
-            throw new Exception("WeldingSlider not holding a central bar.");
-        }
-
-        this.FrontDirection = this.Arms[0].WorldDirection();
-
-        this.Refresh();
-    }
-
-    public string Name() {
-        return this.Arms[0].Name();
-    }
-
-    public Connectors HoldingLink() {
-        if(this.Links[0].Status() == MyShipConnectorStatus.Connected) {
-            return this.Links[0];
-        } else {
-            return this.Links[1];
-        }
-    }
-
-    public void Refresh() {
-        this.Arms[0].Refresh();
-        this.Arms[1].Refresh();
-
-        var anchor_connector = this.HoldingLink().List[0].OtherConnector;
-        var bar_grid = anchor_connector.CubeGrid;
-
-        var bar_max = bar_grid.Max;
-        Echo("Bar max: " + bar_max + " | Anchor: " + anchor_connector.Position);
-        var bar_max_dim = Math.Max(Math.Max(bar_max.X, bar_max.Y), bar_max.Z);
-        float bar_size;
-        // TODO: That's a shady way of getting the bar direction...
-        if(bar_max.X == bar_max_dim) {
-            bar_size = bar_max.X - anchor_connector.Position.X;
-        } else if(bar_max.Y == bar_max_dim) {
-            bar_size = bar_max.Y - anchor_connector.Position.Y;
-        } else {
-            bar_size = bar_max.Z - anchor_connector.Position.Z;
-        }
-        this.Pos = this.HoldingArm().Pos + bar_size * bar_grid.GridSize;
-    }
-
-    public bool Sync() {
-        var synced = true;
-        synced = synced && this.Arms[0].Sync();
-        synced = synced && this.Arms[1].Sync();
-        return synced;
-    }
-
-    public void SetSpeed(float speed) {
-        this.Speed = speed;
-        switch(this.state) {
-            case State.Holding0:
-            case State.SwitchingTo1:
-                this.Arms[0].SetSpeed(speed);
-                this.Arms[1].SetSpeed(-speed);
-                break;
-            case State.Holding1:
-            case State.SwitchingTo0:
-                this.Arms[0].SetSpeed(-speed);
-                this.Arms[1].SetSpeed(speed);
-                break;
-        }
-    }
-
-    public void Reverse() {
-        switch(this.state) {
-            case State.Holding0:
-            case State.Holding1:
-                this.Arms[0].Reverse();
-                this.Arms[1].Reverse();
-                break;
-            case State.SwitchingTo0:
-                this.Links[1].Connect();
-                this.state = State.SwitchingTo1;
-                break;
-            case State.SwitchingTo1:
-                this.Links[0].Connect();
-                this.state = State.SwitchingTo0;
-                break;
-        }
-    }
-
-    // TODO Run should be removed and merged into SetSpeed and MoveTo with the current API usage
-    public void Run() {
-        var arm_0_sync = this.Arms[0].Sync();
-        var arm_1_sync = this.Arms[1].Sync();
-        if(!arm_0_sync || !arm_1_sync) {
-            return;
-        }
-        switch(this.state) {
-            case State.Holding0:
-                if(this.Speed > 0) {
-                    if(this.Arms[0].Pos == this.Arms[0].Max && this.Arms[1].Pos == 0) {
-                        this.Links[1].Connect();
-                        this.state = State.SwitchingTo1;
-                    }
-                } else {
-                    if(this.Arms[1].Pos == this.Arms[1].Max && this.Arms[0].Pos == 0) {
-                        this.Links[1].Connect();
-                        this.state = State.SwitchingTo1;
-                    }
-                }
-                break;
-            case State.SwitchingTo1:
-                if(this.Links[1].Status() == MyShipConnectorStatus.Connected) {
-                    switch(this.Links[0].Status()) {
-                        case MyShipConnectorStatus.Connected:
-                            this.Links[0].Disconnect();
-                            break;
-                        default:
-                            this.state = State.Holding1;
-                            this.Arms[0].Reverse();
-                            this.Arms[1].Reverse();
-                            break;
-                    }
-                } else {
-                    throw new Exception("Link 1 failed to connect");
-                }
-                break;
-            case State.Holding1:
-                if(this.Speed > 0) {
-                    if(this.Arms[1].Pos == this.Arms[1].Max && this.Arms[0].Pos == 0) {
-                        Echo("Arm Maxed");
-                        this.Links[0].Connect();
-                        this.state = State.SwitchingTo0;
-                    }
-                } else {
-                    if(this.Arms[0].Pos == this.Arms[0].Max && this.Arms[1].Pos == 0) {
-                        this.Links[0].Connect();
-                        this.state = State.SwitchingTo0;
-                    }
-                }
-                break;
-            case State.SwitchingTo0:
-                if(this.Links[0].Status() == MyShipConnectorStatus.Connected) {
-                    switch(this.Links[1].Status()) {
-                        case MyShipConnectorStatus.Connected:
-                            Echo("Connected");
-                            this.Links[1].Disconnect();
-                            break;
-                        default:
-                            this.state = State.Holding0;
-                            this.Arms[0].Reverse();
-                            this.Arms[1].Reverse();
-                            break;
-                    }
-                } else {
-                    throw new Exception("Link 1 failed to connect");
-                }
-                break;
-        }
-    }
-
-    Slider HoldingArm() {
-        switch(this.state) {
-            case State.Holding0:
-            case State.SwitchingTo1:
-                return this.Arms[0];
-            case State.Holding1:
-            case State.SwitchingTo0:
-                return this.Arms[1];
-            default:
-                throw new Exception("Bad WeldingArm state: " + this.state);
-        }
-    }
-
-    Slider NonHoldingArm() {
-        switch(this.state) {
-            case State.Holding0:
-            case State.SwitchingTo1:
-                return this.Arms[1];
-            case State.Holding1:
-            case State.SwitchingTo0:
-                return this.Arms[0];
-            default:
-                throw new Exception("Bad WeldingArm state: " + this.state);
-        }
-    }
-
-    float RemainingPistonLength() {
-        var arm = this.HoldingArm();
-
-        if(this.Speed > 0) {
-            return arm.Max - arm.Pos;
-        } else {
-            return arm.Pos;
-        }
-    }
-
-    public void Start() {
-        this.Arms[0].Start();
-        this.Arms[1].Start();
-    }
-
-    public void Stop() {
-        this.Arms[0].Stop();
-        this.Arms[1].Stop();
-    }
-
-    void Echo(string s) {
-        this.Program.Echo("Welding Arm: " + s);
-    }
-
-    public void MoveTo(float pos, float speed) {
-        Echo("MoveTo(" + pos + ", " + speed + ")");
-        if(pos > this.Pos) {
-            var holding_arm = this.HoldingArm();
-            if(holding_arm.Pos == holding_arm.Max) {
-                holding_arm.MoveTo(holding_arm.Max, speed);
-                this.NonHoldingArm().MoveTo(0, speed);
-                this.SetSpeed(speed);
-                this.Run();
-                return;
-            }
-
-            var missing = pos - this.Pos;
-            var arm_pos = (float)Math.Min(holding_arm.Pos + missing, holding_arm.Max);
-            // Echo("pos " + pos + " | this.Pos " + this.Pos + " | missing " + missing + " | arm_pos " + arm_pos + " | holding_arm.Max " + holding_arm.Max + " | holding_arm.Pos " + holding_arm.Pos);
-            // Echo("holding_arm.MoveTo(" + arm_pos + ", " + speed + ")");
-            holding_arm.MoveTo(arm_pos, speed);
-            // Echo("non_holding_arm.MoveTo(" + (holding_arm.Max - arm_pos) + ", " + speed + ")");
-            this.NonHoldingArm().MoveTo(holding_arm.Max - arm_pos, speed);
-        } else if(pos < this.Pos) {
-            var holding_arm = this.HoldingArm();
-            if(holding_arm.Pos == holding_arm.Min) {
-                holding_arm.MoveTo(0, speed);
-                this.NonHoldingArm().MoveTo(holding_arm.Max, speed);
-                this.SetSpeed(-speed);
-                this.Run();
-                return;
-            }
-
-            var missing = pos - this.Pos;
-            var arm_pos = (float)Math.Max(holding_arm.Pos - missing, holding_arm.Min);
-            holding_arm.MoveTo(arm_pos, speed);
-            this.NonHoldingArm().MoveTo(holding_arm.Max - arm_pos, speed);
-        }
-    }
-
-    public Vector3D WorldPosition() {
-        return this.Arms[0].WorldPosition();
-    }
-
-    public Vector3D WorldDirection() {
-        return this.Arms[0].WorldDirection();
-    }
-}
-
 public class Sliders: Slider {
     Program Program;
     public float Pos {get; set;}
@@ -710,118 +425,119 @@ public class Arm {
     }
 }
 
-public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
-    var x_by_name = new Dictionary<string, List<Slider>>();
-    var y_by_name = new Dictionary<string, List<Slider>>();
-    var z_by_name = new Dictionary<string, List<Slider>>();
-    var welding_x = new List<Slider>();
-    var welding_y = new List<Slider>();
-    var welding_z = new List<Slider>();
+enum SliderType {
+    Direct,
+    Crawl,
+}
 
+Nullable<SliderType> SliderTypeFromName(string name) {
+    if(name == "") {
+        return SliderType.Direct;
+    } else if(name.StartsWith("Direct")) {
+        return SliderType.Direct;
+    } else if(name.StartsWith("Crawl")) {
+        return SliderType.Crawl;
+    } else {
+        return null;
+    }
+}
+
+enum Axis {
+    X,
+    Y,
+    Z
+}
+
+public List<Slider> BuildDirectPistons(Dictionary<IMyCubeGrid, List<Slider>> pistons) {
+    var ret = new List<Slider>();
+    foreach(var kv in pistons) {
+        if(kv.Value.Count == 0) {
+            ret.Add(kv.Value[0]);
+        } else {
+            ret.Add(new Sliders(this, kv.Value));
+        }
+    }
+    return ret;
+}
+
+public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
+    var pistons = new Dictionary<IMyCubeGrid, List<Slider>>[2][];
+    for(var i = 0; i < 2; i++) {
+        var plist = new Dictionary<IMyCubeGrid, List<Slider>>[3];
+        for(var j = 0; j < 3; j++) {
+            plist[j] = new Dictionary<IMyCubeGrid, List<Slider>>();
+        }
+        pistons[i] = plist;
+    }
+
+    var top_w_matrix = top_block.CubeGrid.WorldMatrix;
+    var z_axis = top_w_matrix.GetDirectionVector(top_block.Orientation.Forward);
+    var y_axis = top_w_matrix.GetDirectionVector(top_block.Orientation.Up);
+    var x_axis = top_w_matrix.GetDirectionVector(top_block.Orientation.Left);
+
+    Echo("Scanning pistons");
     var list = new List<IMyPistonBase>();
     this.GridTerminalSystem.GetBlocksOfType<IMyPistonBase>(list);
     foreach(var piston in list) {
-        var piston_name_length = (name + " X+").Length;
-        var piston_name = piston.CustomName;
-        var group_name = "";
-        if(piston.CustomName.Length > piston_name_length) {
-            piston_name = piston.CustomName.Substring(0, piston_name_length);
-            group_name = piston.CustomName.Substring(piston_name_length);
-            // Echo("piston_name " + piston_name + " | " + name + " X+");
-        }
-        var welding_name_length = (name + " Welding X+").Length;
-        var welding_name = piston.CustomName;
-        if(piston.CustomName.Length > welding_name_length) {
-            welding_name = piston.CustomName.Substring(0, welding_name_length);
-        }
-        Piston piston_obj;
-        if(piston.CustomName.Contains('+')) {
-            piston_obj = new Piston(this, piston, SliderDirection.Positive);
-        } else {
-            piston_obj = new Piston(this, piston, SliderDirection.Negative);
-        }
-
-        if(piston_name == name + " X+" || piston_name == name + " X-") {
-            if(!x_by_name.ContainsKey(group_name)) {
-                x_by_name.Add(group_name, new List<Slider>());
-            }
-            x_by_name[group_name].Add(piston_obj);
-        } else if(piston_name == name + " Y+" || piston_name == name + " Y-") {
-            if(!y_by_name.ContainsKey(group_name)) {
-                y_by_name.Add(group_name, new List<Slider>());
-            }
-            y_by_name[group_name].Add(piston_obj);
-        } else if(piston_name == name + " Z+" || piston_name == name + " Z-") {
-            if(!z_by_name.ContainsKey(group_name)) {
-                z_by_name.Add(group_name, new List<Slider>());
-            }
-            z_by_name[group_name].Add(piston_obj);
-        } else if(welding_name == name + " Welding X+" || welding_name == name + " Welding X-") {
-            welding_x.Add(piston_obj);
-        } else if(welding_name == name + " Welding Y+" || welding_name == name + " Welding Y-") {
-            welding_y.Add(piston_obj);
-        } else if(welding_name == name + " Welding Z+" || welding_name == name + " Welding Z-") {
-            welding_z.Add(piston_obj);
-        }
-    }
-
-    // Build slider groups
-    var x = new List<Slider>();
-    var y = new List<Slider>();
-    var z = new List<Slider>();
-    foreach(var kv in x_by_name) {
-        x.Add(new Sliders(this, kv.Value));
-    }
-    foreach(var kv in y_by_name) {
-        y.Add(new Sliders(this, kv.Value));
-    }
-    foreach(var kv in z_by_name) {
-        z.Add(new Sliders(this, kv.Value));
-    }
-
-    // Build Welding Sliders
-    var axes_sliders = new List<List<Slider>>() {welding_x, welding_y, welding_z};
-    var axes_name = new List<string>() {"X", "Y", "Z"};
-    var axes_chain = new List<List<Slider>>() {x, y, z};
-    for(var i = 0; i < axes_sliders.Count; i++) {
-        var sliders = axes_sliders[i];
-        var direction = axes_name[i];
-        var chain = axes_chain[i];
-        if(sliders.Count >= 2) {
-            // Fetch connectors
-            var links = new List<Connectors>();
-            for(var j = 0; j < 2; j++) {
-                var connectors = new List<IMyShipConnector>();
-                var tmp = new List<IMyTerminalBlock>();
-                this.GridTerminalSystem.SearchBlocksOfName(name + " Welding Connector " + direction + " " + j, tmp);
-                foreach(var connector in tmp) {
-                    connectors.Add((IMyShipConnector)connector);
-                }
-                links.Add(new Connectors(connectors.ToArray()));
+        if(piston.CustomName.StartsWith(name)) {
+            var name_spec = "";
+            if(piston.CustomName.Length > name.Length) {
+                name_spec = piston.CustomName.Substring(name.Length + 1);
             }
 
-            // Refetch sliders
-            var arms_sliders = new List<Slider>[]{ new List<Slider>(), new List<Slider>() };
-            foreach(var slider in sliders) {
-                if(slider.Name().Substring((name + " Welding " + direction).Length + 1) == " 0") {
-                    arms_sliders[0].Add(slider);
+            var type = SliderTypeFromName(name_spec);
+            type = SliderType.Direct;
+            if(type != null) {
+                var i_type = (int)type;
+                var cube_grid = piston.CubeGrid;
+                var piston_front = Vector3D.Normalize(piston.Top.GetPosition() - piston.GetPosition());
+                SliderDirection direction;
+                Dictionary<IMyCubeGrid, List<Slider>> per_grid;
+                if(Vector3D.Dot(z_axis, piston_front) > 0.9) {
+                    Echo("Z+");
+                    per_grid = pistons[i_type][(int)Axis.Z];
+                    direction = SliderDirection.Positive;
+                } else if(Vector3D.Dot(z_axis, piston_front) < -0.9) {
+                    Echo("Z-");
+                    per_grid = pistons[i_type][(int)Axis.Z];
+                    direction = SliderDirection.Negative;
+                } else if(Vector3D.Dot(y_axis, piston_front) > 0.9) {
+                    Echo("Y+ " + Vector3D.Dot(y_axis, piston_front));
+                    per_grid = pistons[i_type][(int)Axis.Y];
+                    direction = SliderDirection.Positive;
+                } else if(Vector3D.Dot(y_axis, piston_front) < -0.9) {
+                    Echo("Y-");
+                    per_grid = pistons[i_type][(int)Axis.Y];
+                    direction = SliderDirection.Negative;
+                } else if(Vector3D.Dot(x_axis, piston_front) > 0.9) {
+                    Echo("X+");
+                    per_grid = pistons[i_type][(int)Axis.X];
+                    direction = SliderDirection.Positive;
+                } else if(Vector3D.Dot(x_axis, piston_front) < -0.9) {
+                    Echo("X-");
+                    per_grid = pistons[i_type][(int)Axis.X];
+                    direction = SliderDirection.Negative;
                 } else {
-                    arms_sliders[1].Add(slider);
+                    throw new Exception("Burp");
                 }
+                if(!per_grid.ContainsKey(cube_grid)) {
+                    per_grid.Add(cube_grid, new List<Slider>());
+                }
+                per_grid[cube_grid].Add(new Piston(this, piston, direction));
             }
-            var arms = new Sliders[] {
-                new Sliders(this, arms_sliders[0]),
-                new Sliders(this, arms_sliders[1]),
-            };
-
-            Echo("Found a Welding Arm!");
-            chain.Add(new WeldingSlider(this, arms, links.ToArray(), top_block, arms[0].Direction, 0, 10000));
         }
     }
 
-    var arm_x = new SliderChain(x, SliderDirection.Positive);
-    var arm_y = new SliderChain(y, SliderDirection.Positive);
-    var arm_z = new SliderChain(z, SliderDirection.Positive);
+    Echo("Building complex sliders");
+    var sliders = new List<Slider>[3];
+    for(var i = 0; i < 3; i++) {
+        sliders[i] = new List<Slider>();
+        sliders[i].AddRange(BuildDirectPistons(pistons[(int)SliderType.Direct][i]));
+    }
+
+    var arm_x = new SliderChain(sliders[(int)Axis.X], SliderDirection.Positive);
+    var arm_y = new SliderChain(sliders[(int)Axis.Y], SliderDirection.Positive);
+    var arm_z = new SliderChain(sliders[(int)Axis.Z], SliderDirection.Positive);
 
     return new Arm(this, arm_x, arm_y, arm_z);
 }
