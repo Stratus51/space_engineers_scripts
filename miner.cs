@@ -9,8 +9,6 @@ public interface Slider {
     float Max {get;}
     float Speed {get;}
 
-    SliderDirection Direction {get;}
-
     string Name();
     void Refresh();
     bool Sync();
@@ -25,21 +23,90 @@ public interface Slider {
     string StateToString();
 }
 
+public class ReverseSlider<T>: Slider where T : Slider {
+    public float Pos {get;set;}
+    public float Min {get;}
+    public float Max {get;}
+    public float Speed {get;set;}
+
+    T Slider;
+
+    public ReverseSlider(T slider) {
+        this.Slider = slider;
+        this.Min = this.Slider.Min;
+        this.Max = this.Slider.Max;
+    }
+
+    float ReversedPos(float pos) {
+        return this.Slider.Max - pos + this.Slider.Min;
+    }
+
+    public string Name() {
+        return this.Slider.Name();
+    }
+
+    public void Refresh() {
+        this.Slider.Refresh();
+        this.Pos = this.ReversedPos(this.Slider.Pos);
+        this.Speed = -this.Slider.Speed;
+    }
+
+    public bool Sync() {
+        return this.Slider.Sync();
+    }
+
+    public void SetSpeed(float speed) {
+        this.Slider.SetSpeed(-speed);
+        this.Speed = speed;
+    }
+
+    public void Reverse() {
+        this.Slider.Reverse();
+        this.Speed = -this.Speed;
+    }
+
+    public void Start() {
+        this.Slider.Start();
+    }
+
+    public void Stop() {
+        this.Slider.Stop();
+    }
+
+    public void Run() {
+        this.Slider.Run();
+    }
+
+    public void MoveTo(float pos, float speed) {
+        this.Slider.MoveTo(this.ReversedPos(pos), speed);
+    }
+
+    public Vector3D WorldPosition() {
+        return this.Slider.WorldPosition();
+    }
+
+    public Vector3D WorldDirection() {
+        return this.Slider.WorldDirection();
+    }
+
+    public string StateToString() {
+        return "[Reversed] " + this.Slider.StateToString();
+    }
+}
+
 public class Piston: Slider {
     Program Program;
     public float Pos {get; set;}
     public float Min {get;}
     public float Max {get;}
-    public SliderDirection Direction {get;}
     public float Speed {get; set;}
     public IMyPistonBase piston;
 
-    public Piston(Program program, IMyPistonBase piston, SliderDirection direction) {
+    public Piston(Program program, IMyPistonBase piston) {
         this.Program = program;
 
         this.Min = 0;
         this.Max = piston.HighestPosition;
-        this.Direction = direction;
         this.piston = piston;
         this.Refresh();
     }
@@ -79,7 +146,7 @@ public class Piston: Slider {
     public void Run() {}
 
     public void MoveTo(float pos, float speed) {
-        this.Program.Echo("Piston[" + this.Pos + "].MoveTo: " + pos + " | " + speed);
+        // this.Program.Echo(this.Name() + " Piston[" + this.Pos + "].MoveTo: " + pos + " | " + speed);
         this.piston.MinLimit = pos;
         this.piston.MaxLimit = pos;
 
@@ -205,7 +272,6 @@ public class Sliders: Slider {
     public float Pos {get; set;}
     public float Min {get;}
     public float Max {get;}
-    public SliderDirection Direction {get;}
     public float Speed {get; set;}
     public List<Slider> List;
     bool Enabled;
@@ -215,13 +281,12 @@ public class Sliders: Slider {
         this.List = sliders;
         this.Min = 0;
         this.Max = (float)sliders[0].Max;
-        this.Direction = sliders[0].Direction;
         this.Refresh();
 
         var size = sliders[0].Max;
         foreach(var slider in sliders) {
             if(slider.Max != size) {
-                throw new Exception("Grouped sliders of different size!");
+                throw new Exception("Grouped sliders of different size (" + slider.Max + " != " + size + ")!");
             }
         }
     }
@@ -290,7 +355,7 @@ public class Sliders: Slider {
     }
 
     public void MoveTo(float pos, float speed) {
-        this.Echo("MoveTo[" + this.List.Count + "](" + pos + ", " + speed + ")");
+        // this.Echo("MoveTo[" + this.List.Count + "](" + pos + ", " + speed + ")");
         foreach(var slider in this.List) {
             slider.MoveTo(pos, speed);
         }
@@ -326,36 +391,23 @@ public class Sliders: Slider {
 }
 
 public class SliderChain: Slider {
+    Program Program;
     List<Slider> List;
-    List<Slider> Positive;
-    List<Slider> Negative;
 
     public float Pos {get; set;}
     public float Min {get;}
     public float Max {get;}
     public float Speed {get; set;}
-    public SliderDirection Direction {get;}
     bool Enabled;
     Slider Last;
 
-    public SliderChain(Program program, List<Slider> sliders, SliderDirection direction) {
+    public SliderChain(Program program, List<Slider> sliders) {
+        this.Program = program;
         this.List = sliders;
-        this.Positive = new List<Slider>();
-        this.Negative = new List<Slider>();
         this.Min = 0.0f;
         this.Max = 0.0f;
-        this.Direction = direction;
-        program.Echo("SliderChain " + sliders.Count);
         foreach(var slider in sliders) {
             this.Max += slider.Max;
-            switch(slider.Direction) {
-                case SliderDirection.Positive:
-                    this.Positive.Add(slider);
-                    break;
-                case SliderDirection.Negative:
-                    this.Negative.Add(slider);
-                    break;
-            }
         }
         this.Refresh();
     }
@@ -370,51 +422,39 @@ public class SliderChain: Slider {
 
     public void Refresh() {
         this.Pos = 0.0f;
-        foreach(var slider in this.Positive) {
+        foreach(var slider in this.List) {
             slider.Refresh();
             this.Pos += slider.Pos;
-        }
-        foreach(var slider in this.Negative) {
-            slider.Refresh();
-            this.Pos += slider.Max - slider.Pos;
         }
     }
 
     public void MoveTo(float pos, float speed) {
         var current_pos = this.Pos;
-        List<Slider> to_extend;
-        List<Slider> to_retract;
         float needed;
         if(pos > current_pos) {
             needed = pos - current_pos;
-            to_extend = this.Positive;
-            to_retract = this.Negative;
             this.Speed = speed;
+            foreach(var slider in this.List) {
+                if(slider.Pos < slider.Max) {
+                    var goal = (float)Math.Min(slider.Max, slider.Pos + needed);
+                    slider.MoveTo(goal, speed);
+                    this.Last = slider;
+                    return;
+                }
+            }
         } else if(current_pos > pos) {
             needed = current_pos - pos;
-            to_extend = this.Negative;
-            to_retract = this.Positive;
             this.Speed = -speed;
+            foreach(var slider in this.List) {
+                if(slider.Pos > slider.Min) {
+                    var goal = (float)Math.Max(slider.Min, slider.Pos - needed);
+                    slider.MoveTo(goal, speed);
+                    this.Last = slider;
+                    return;
+                }
+            }
         } else {
             return;
-        }
-
-        foreach(var slider in to_extend) {
-            if(slider.Pos < slider.Max) {
-                var goal = (float)Math.Min(slider.Max, slider.Pos + needed);
-                slider.MoveTo(goal, speed);
-                this.Last = slider;
-                return;
-            }
-        }
-
-        foreach(var slider in to_retract) {
-            if(slider.Pos > slider.Min) {
-                var goal = (float)Math.Max(slider.Min, slider.Pos - needed);
-                slider.MoveTo(goal, speed);
-                this.Last = slider;
-                return;
-            }
         }
     }
 
@@ -445,16 +485,9 @@ public class SliderChain: Slider {
     }
 
     public void SetSpeed(float speed) {
-        foreach(var slider in this.Positive) {
+        foreach(var slider in this.List) {
             if(slider.Pos < slider.Max) {
                 slider.SetSpeed(speed);
-                return;
-            }
-        }
-
-        foreach(var slider in this.Negative) {
-            if(slider.Pos > slider.Min) {
-                slider.SetSpeed(-speed);
                 return;
             }
         }
@@ -467,18 +500,18 @@ public class SliderChain: Slider {
     }
 
     public Vector3D WorldPosition() {
-        if(this.Positive.Count > 0) {
-            return this.Positive[0].WorldPosition();
+        if(this.List.Count > 0) {
+            return this.List[0].WorldPosition();
         } else {
-            return -this.Negative[0].WorldPosition();
+            return new Vector3D(0, 0, 0);
         }
     }
 
     public Vector3D WorldDirection() {
-        if(this.Positive.Count > 0) {
-            return this.Positive[0].WorldDirection();
+        if(this.List.Count > 0) {
+            return this.List[0].WorldDirection();
         } else {
-            return -this.Negative[0].WorldDirection();
+            return new Vector3D(0, 0, 0);
         }
     }
 
@@ -499,6 +532,10 @@ public class SliderChain: Slider {
             return "Stopped " + last_state;
         }
     }
+
+    void Echo(string s) {
+        this.Program.Echo("SliderChain: " + s);
+    }
 }
 
 const float CRAWL_MIN = 2.6f;
@@ -510,8 +547,6 @@ public class CrawlSlider: Slider {
     public float Pos {get;set;}
     public float Min {get;}
     public float Max {get;}
-
-    public SliderDirection Direction {get;}
 
     Program Program;
     string name;
@@ -610,6 +645,7 @@ public class CrawlSlider: Slider {
     public void MoveTo(float pos, float speed) {
         if(pos > this.Pos) {
             var slider_target = Math.Min(CRAWL_MAX, pos - this.Pos + this.Slider.Pos);
+            Echo("slider_target " + slider_target);
             this.Speed = speed;
             switch(this.state) {
                 case State.TranslatingLoad:
@@ -622,6 +658,7 @@ public class CrawlSlider: Slider {
                         this.MoveTo(pos, speed);
                     } else {
                         this.Slider.MoveTo(slider_target, speed);
+                        this.MergeBlocks[1].SetEnabled(false);
                     }
                     break;
                 case State.SyncBottomConnector:
@@ -642,7 +679,6 @@ public class CrawlSlider: Slider {
                     }
                     break;
                 case State.UnlockingTop:
-                    Echo("State.UnlockingTop: " + this.Connectors[0].Status() + " | " + this.MergeBlocks[0].IsDisabled());
                     if(this.Connectors[0].Status() == MyShipConnectorStatus.Connectable && this.MergeBlocks[0].IsDisabled()) {
                         this.state = State.TranslatingSlider;
                         this.MoveTo(pos, speed);
@@ -794,14 +830,11 @@ public List<Slider> BuildCrawlSliders(string root_name, Dictionary<IMyCubeGrid, 
     string base_name = root_name + " Crawl";
     var names = new List<string>();
     var all_sliders = new List<Slider>();
-    Echo("Building Crawl sliders");
     foreach(var entry in sliders_dict) {
-        Echo("entry: " + entry.Value.Count);
         foreach(var slider in entry.Value) {
             var sub_name = slider.Name().Substring(base_name.Length);
             names.Add(sub_name);
             all_sliders.Add(slider);
-            Echo("Found slider '" + sub_name + "'");
         }
     }
 
@@ -882,7 +915,8 @@ public List<Slider> BuildDirectPistons(Dictionary<IMyCubeGrid, List<Slider>> pis
         if(kv.Value.Count == 0) {
             ret.Add(kv.Value[0]);
         } else {
-            ret.Add(new Sliders(this, kv.Value));
+            var sliders = new Sliders(this, kv.Value);
+            ret.Add(sliders);
         }
     }
     return ret;
@@ -922,37 +956,40 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
                     SliderDirection direction;
                     Dictionary<IMyCubeGrid, List<Slider>> per_grid;
                     var type_piston = pistons[i_type];
+                    Axis axis;
                     if(Vector3D.Dot(z_axis, piston_front) > 0.9) {
-                        Echo(type + " Z+");
-                        per_grid = type_piston[(int)Axis.Z];
+                        axis = Axis.Z;
                         direction = SliderDirection.Positive;
                     } else if(Vector3D.Dot(z_axis, piston_front) < -0.9) {
-                        Echo(type + " Z-");
-                        per_grid = type_piston[(int)Axis.Z];
+                        axis = Axis.Z;
                         direction = SliderDirection.Negative;
                     } else if(Vector3D.Dot(y_axis, piston_front) > 0.9) {
-                        Echo(type + " Y+");
-                        per_grid = type_piston[(int)Axis.Y];
+                        axis = Axis.Y;
                         direction = SliderDirection.Positive;
                     } else if(Vector3D.Dot(y_axis, piston_front) < -0.9) {
-                        Echo(type + " Y-");
-                        per_grid = type_piston[(int)Axis.Y];
+                        axis = Axis.Y;
                         direction = SliderDirection.Negative;
                     } else if(Vector3D.Dot(x_axis, piston_front) > 0.9) {
-                        Echo(type + " X+");
-                        per_grid = type_piston[(int)Axis.X];
+                        axis = Axis.X;
                         direction = SliderDirection.Positive;
                     } else if(Vector3D.Dot(x_axis, piston_front) < -0.9) {
-                        Echo(type + " X-");
-                        per_grid = type_piston[(int)Axis.X];
+                        axis = Axis.X;
                         direction = SliderDirection.Negative;
                     } else {
                         throw new Exception("Burp");
                     }
+                    Echo(type + " " + axis + " " + direction);
+                    per_grid = type_piston[(int)axis];
                     if(!per_grid.ContainsKey(cube_grid)) {
                         per_grid.Add(cube_grid, new List<Slider>());
                     }
-                    per_grid[cube_grid].Add(new Piston(this, piston, direction));
+                    Slider slider;
+                    if(direction == SliderDirection.Positive) {
+                        slider = new Piston(this, piston);
+                    } else {
+                        slider = new ReverseSlider<Piston>(new Piston(this, piston));
+                    }
+                    per_grid[cube_grid].Add(slider);
                 }
             }
         }
@@ -995,9 +1032,9 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
         sliders[i].AddRange(crawl_sliders);
     }
 
-    var arm_x = new SliderChain(this, sliders[(int)Axis.X], SliderDirection.Positive);
-    var arm_y = new SliderChain(this, sliders[(int)Axis.Y], SliderDirection.Positive);
-    var arm_z = new SliderChain(this, sliders[(int)Axis.Z], SliderDirection.Positive);
+    var arm_x = new SliderChain(this, sliders[(int)Axis.X]);
+    var arm_y = new SliderChain(this, sliders[(int)Axis.Y]);
+    var arm_z = new SliderChain(this, sliders[(int)Axis.Z]);
 
     return new Arm(this, arm_x, arm_y, arm_z);
 }
