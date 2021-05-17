@@ -1,3 +1,7 @@
+static string VectorToString(Vector3D v) {
+    return "X=" + v.X.ToString("0.0") + " Y=" + v.Y.ToString("0.0") + " Z=" + v.Z.ToString("0.0");
+}
+
 public enum SliderDirection {
     Positive,
     Negative,
@@ -86,7 +90,7 @@ public class ReverseSlider<T>: Slider where T : Slider {
     }
 
     public Vector3D WorldDirection() {
-        return this.Slider.WorldDirection();
+        return -this.Slider.WorldDirection();
     }
 
     public string StateToString() {
@@ -540,7 +544,7 @@ public class SliderChain: Slider {
 
 const float CRAWL_MIN = 2.6f;
 const float CRAWL_MAX = 9.8f;
-const float CRAWL_RETRACT_SPEED = 3f;
+const float CRAWL_RETRACT_SPEED = 0.5f;
 const float CRAWL_GRIND_TIME = 2f;
 
 public class CrawlSlider: Slider {
@@ -609,7 +613,7 @@ public class CrawlSlider: Slider {
 
     public void Refresh() {
         this.Slider.Refresh();
-        this.Pos = (float)Vector3D.Dot(this.Slider.WorldPosition() - this.Origin.GetPosition(), this.WorldDirection()) + this.Slider.Pos;
+        this.Pos = (float)Vector3D.Dot(this.Connectors[1].List[0].GetPosition() - this.Origin.GetPosition(), this.WorldDirection());
     }
 
     public bool Sync() {
@@ -643,14 +647,17 @@ public class CrawlSlider: Slider {
     }
 
     public void MoveTo(float pos, float speed) {
+        speed = speed/10;
         if(pos > this.Pos) {
             var slider_target = Math.Min(CRAWL_MAX, pos - this.Pos + this.Slider.Pos);
-            Echo("slider_target " + slider_target);
-            this.Speed = speed;
+            Echo("MoveTo: " + this.Pos + " => " + pos + " @ " + speed);
+            Echo("Target " + slider_target + " @ " + speed);
             switch(this.state) {
                 case State.TranslatingLoad:
-                    if(this.Slider.Pos > 7) {
+                    if(this.Slider.Pos > 6) {
                         this.MergeBlocks[1].SetEnabled(true);
+                    } else {
+                        this.MergeBlocks[1].SetEnabled(false);
                     }
 
                     if(this.MergeBlocks[1].IsConnected()) {
@@ -658,7 +665,6 @@ public class CrawlSlider: Slider {
                         this.MoveTo(pos, speed);
                     } else {
                         this.Slider.MoveTo(slider_target, speed);
-                        this.MergeBlocks[1].SetEnabled(false);
                     }
                     break;
                 case State.SyncBottomConnector:
@@ -688,8 +694,10 @@ public class CrawlSlider: Slider {
                     }
                     break;
                 case State.TranslatingSlider:
-                    if(this.Slider.Pos < 7) {
+                    if(this.Slider.Pos < 7.5) {
                         this.MergeBlocks[0].SetEnabled(true);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(false);
                     }
                     if(this.MergeBlocks[0].IsConnected()) {
                         this.state = State.Grind;
@@ -786,7 +794,8 @@ public class Arm {
     }
 
     public void MoveTo(Vector3D pos, Vector3D speed) {
-        this.Program.Echo("MoveTo: " + pos + " | " + speed);
+        Echo("MoveTo: " + VectorToString(pos));
+        Echo("      @ " + VectorToString(pos));
         this.X.MoveTo((float)pos.X, (float)speed.X);
         this.Y.MoveTo((float)pos.Y, (float)speed.Y);
         this.Z.MoveTo((float)pos.Z, (float)speed.Z);
@@ -802,6 +811,10 @@ public class Arm {
         this.X.Stop();
         this.Y.Stop();
         this.Z.Stop();
+    }
+
+    public void Echo(string s) {
+        this.Program.Echo("Arm: " + s);
     }
 }
 
@@ -1109,8 +1122,6 @@ public class Miner {
         int max_x = this.MaxI.X;
         int max_y = this.MaxI.Y;
         int max_z = this.MaxI.Z;
-        Echo(x + ";" + y + ";" + z);
-        Echo(max_x + ";" + max_y + ";" + max_z);
         if(z % 2 == 0) {
             if(y % 2 == 0) {
                 if(x != max_x) {
@@ -1183,19 +1194,25 @@ public class Miner {
                 dst.X = this.Arm.X.Max;
                 break;
             case EXTEND_Y:
-                dst.Y = (float)(this.PosI.Y + 1) * this.Step;
+                dst.Y = (float)(this.PosI.Y + 1) * this.Step + 0.1f;
                 break;
             case EXTEND_Z:
-                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep;
+                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep + 0.1f;
                 break;
             case RETRACT_X:
                 dst.X = 0.0;
                 break;
             case RETRACT_Y:
                 dst.Y = (float)(this.PosI.Y - 1) * this.Step;
+                if(dst.Y > 0.0f) {
+                    dst.Y += 0.1f;
+                }
                 break;
             case RETRACT_Z:
                 dst.Z = (float)(this.PosI.Z - 1) * this.DepthStep;
+                if(dst.Z > 0.0f) {
+                    dst.Z += 0.1f;
+                }
                 break;
             default:
                 break;
