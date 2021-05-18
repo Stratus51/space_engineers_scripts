@@ -278,6 +278,7 @@ public class Sliders: Slider {
     public float Max {get;}
     public float Speed {get; set;}
     public List<Slider> List;
+    List<float> Offsets;
     bool Enabled;
 
     public Sliders(Program program, List<Slider> sliders) {
@@ -285,7 +286,6 @@ public class Sliders: Slider {
         this.List = sliders;
         this.Min = 0;
         this.Max = (float)sliders[0].Max;
-        this.Refresh();
 
         var size = sliders[0].Max;
         foreach(var slider in sliders) {
@@ -293,6 +293,13 @@ public class Sliders: Slider {
                 throw new Exception("Grouped sliders of different size (" + slider.Max + " != " + size + ")!");
             }
         }
+
+        this.Offsets = new List<float>();
+        var pos = sliders[0].Pos;
+        foreach(var slider in sliders) {
+            this.Offsets.Add(slider.Pos - pos);
+        }
+        this.Refresh();
     }
 
     public string Name() {
@@ -308,6 +315,11 @@ public class Sliders: Slider {
             }
         }
         this.Pos = pos;
+
+        for(var i = 0; i < this.List.Count; i++) {
+            var slider = this.List[i];
+            this.Offsets[i] = slider.Pos - pos;
+        }
     }
 
     public bool Sync() {
@@ -360,8 +372,10 @@ public class Sliders: Slider {
 
     public void MoveTo(float pos, float speed) {
         // this.Echo("MoveTo[" + this.List.Count + "](" + pos + ", " + speed + ")");
-        foreach(var slider in this.List) {
-            slider.MoveTo(pos, speed);
+        for(var i = 0; i < this.List.Count; i++) {
+            var slider = this.List[i];
+            var offset = this.Offsets[i];
+            slider.MoveTo(pos + offset, speed);
         }
         this.Speed = this.List[0].Speed;
     }
@@ -542,10 +556,11 @@ public class SliderChain: Slider {
     }
 }
 
-const float CRAWL_MIN = 2.6f;
+const float CRAWL_MIN = 2.4f;
 const float CRAWL_MAX = 9.8f;
-const float CRAWL_RETRACT_SPEED = 0.5f;
+const float CRAWL_RETRACT_SPEED = 3f;
 const float CRAWL_GRIND_TIME = 2f;
+const float MERGE_BLOCK_MIN_DIST = 0.5f;
 
 public class CrawlSlider: Slider {
     public float Pos {get;set;}
@@ -565,12 +580,16 @@ public class CrawlSlider: Slider {
 
     enum State {
         TranslatingLoad,
-        SyncBottomConnector,
-        LockingBottomConnector,
-        UnlockingTop,
+        MergeTopSlideUp,
+        MergeTopSlideDown,
+        SyncTopConnector,
+        LockingTopConnector,
+        UnlockingBottom,
         TranslatingSlider,
         Grind,
-        LockingTop,
+        MergeBottomSlideUp,
+        MergeBottomSlideDown,
+        LockingBottomConnector,
         UnlockingBottomMergeBlock,
     }
     State state;
@@ -614,6 +633,11 @@ public class CrawlSlider: Slider {
     public void Refresh() {
         this.Slider.Refresh();
         this.Pos = (float)Vector3D.Dot(this.Connectors[1].List[0].GetPosition() - this.Origin.GetPosition(), this.WorldDirection());
+
+        // Make the exterior think we are immobile while merging the load.
+        if(this.state == State.MergeTopSlideUp || this.state == State.MergeTopSlideDown) {
+            this.Pos += CRAWL_MAX - this.Slider.Pos;
+        }
     }
 
     public bool Sync() {
@@ -647,78 +671,172 @@ public class CrawlSlider: Slider {
     }
 
     public void MoveTo(float pos, float speed) {
-        speed = speed/10;
         if(pos > this.Pos) {
-            var slider_target = Math.Min(CRAWL_MAX, pos - this.Pos + this.Slider.Pos);
+            var slider_target = Math.Min(10f, pos - this.Pos + this.Slider.Pos);
             Echo("MoveTo: " + this.Pos + " => " + pos + " @ " + speed);
             Echo("Target " + slider_target + " @ " + speed);
+            Echo("State: " + this.state);
+            this.Speed = speed;
             switch(this.state) {
                 case State.TranslatingLoad:
-                    if(this.Slider.Pos > 6) {
-                        this.MergeBlocks[1].SetEnabled(true);
-                    } else {
-                        this.MergeBlocks[1].SetEnabled(false);
-                    }
-
-                    if(this.MergeBlocks[1].IsConnected()) {
-                        this.state = State.SyncBottomConnector;
+                    if(this.Slider.Pos >= CRAWL_MAX) {
+                        this.state = State.MergeTopSlideUp;
                         this.MoveTo(pos, speed);
                     } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(false);
                         this.Slider.MoveTo(slider_target, speed);
                     }
                     break;
-                case State.SyncBottomConnector:
-                    if(this.Slider.Pos >= CRAWL_MAX) {
-                        this.state = State.LockingBottomConnector;
+                case State.MergeTopSlideUp:
+                    if(this.MergeBlocks[1].IsConnected()) {
+                        this.state = State.SyncTopConnector;
                         this.MoveTo(pos, speed);
                     } else {
+                        var target = CRAWL_MAX - MERGE_BLOCK_MIN_DIST;
+                        if(this.Slider.Pos > target) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Connect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(target - 0.05f, speed);
+                        } else {
+                            this.state = State.MergeTopSlideDown;
+                            this.MoveTo(pos, speed);
+                        }
+                    }
+                    break;
+                case State.MergeTopSlideDown:
+                    if(this.MergeBlocks[1].IsConnected()) {
+                        this.state = State.SyncTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        if(this.Slider.Pos < CRAWL_MAX) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Connect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(CRAWL_MAX + 0.05f, speed);
+                        } else {
+                            this.state = State.MergeTopSlideUp;
+                            this.MoveTo(pos, speed);
+                        }
+                    }
+                    break;
+                case State.SyncTopConnector:
+                    if(!this.Sync()) {
+                        break;
+                    }
+                    if(this.Slider.Pos >= CRAWL_MAX) {
+                        this.state = State.LockingTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
                         this.Connectors[1].Disconnect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
                         this.Slider.MoveTo(CRAWL_MAX, speed);
                     }
                     break;
-                case State.LockingBottomConnector:
+                case State.LockingTopConnector:
                     if(this.Connectors[1].Status() == MyShipConnectorStatus.Connected) {
-                        this.state = State.UnlockingTop;
+                        this.state = State.UnlockingBottom;
                         this.MoveTo(pos, speed);
                     } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
                         this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
                     }
                     break;
-                case State.UnlockingTop:
+                case State.UnlockingBottom:
                     if(this.Connectors[0].Status() == MyShipConnectorStatus.Connectable && this.MergeBlocks[0].IsDisabled()) {
                         this.state = State.TranslatingSlider;
                         this.MoveTo(pos, speed);
                     } else {
-                        this.Connectors[0].Disconnect();
                         this.MergeBlocks[0].SetEnabled(false);
+                        this.Connectors[0].Disconnect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
                     }
                     break;
                 case State.TranslatingSlider:
-                    if(this.Slider.Pos < 7.5) {
-                        this.MergeBlocks[0].SetEnabled(true);
-                    } else {
-                        this.MergeBlocks[0].SetEnabled(false);
-                    }
-                    if(this.MergeBlocks[0].IsConnected()) {
+                    if(this.Slider.Pos <= CRAWL_MIN) {
                         this.state = State.Grind;
                         this.RemainingGrind = new TimeSpan(0, 0, 2);
                     } else {
-                        this.Slider.MoveTo(CRAWL_MIN, CRAWL_RETRACT_SPEED);
+                        this.MergeBlocks[0].SetEnabled(false);
+                        this.Connectors[0].Disconnect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.Slider.MoveTo(CRAWL_MIN - 0.1f, CRAWL_RETRACT_SPEED);
                     }
                     break;
                 case State.Grind:
                     this.RemainingGrind -= this.Program.Runtime.TimeSinceLastRun;
                     if(this.RemainingGrind < TimeSpan.Zero) {
-                        this.state = State.LockingTop;
+                        this.MergeBlocks[0].SetEnabled(false);
+                        this.Connectors[0].Disconnect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.state = State.MergeBottomSlideUp;
                         this.MoveTo(pos, speed);
                     }
                     break;
-                case State.LockingTop:
-                    if(this.Connectors[0].Status() == MyShipConnectorStatus.Connected) {
+                case State.MergeBottomSlideUp:
+                    if(this.MergeBlocks[0].IsConnected()) {
+                        this.state = State.LockingBottomConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        var target = CRAWL_MIN + MERGE_BLOCK_MIN_DIST;
+                        if(this.Slider.Pos < target) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Disconnect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(target + 0.05f, speed);
+                        } else {
+                            this.state = State.MergeBottomSlideDown;
+                            this.MoveTo(pos, speed);
+                        }
+                    }
+                    break;
+                case State.MergeBottomSlideDown:
+                    if(this.MergeBlocks[0].IsConnected()) {
+                        this.state = State.LockingBottomConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        var target = CRAWL_MIN;
+                        if(this.Slider.Pos > target) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Disconnect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(target - 0.05f, speed);
+                        } else {
+                            this.state = State.MergeBottomSlideUp;
+                            this.MoveTo(pos, speed);
+                        }
+                    }
+                    break;
+                case State.LockingBottomConnector:
+                    if(this.Connectors[1].Status() == MyShipConnectorStatus.Connected) {
                         this.state = State.UnlockingBottomMergeBlock;
                         this.MoveTo(pos, speed);
                     } else {
+                        this.MergeBlocks[0].SetEnabled(true);
                         this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
                     }
                     break;
                 case State.UnlockingBottomMergeBlock:
@@ -726,6 +844,8 @@ public class CrawlSlider: Slider {
                         this.state = State.TranslatingLoad;
                         this.MoveTo(pos, speed);
                     } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
                         this.Connectors[1].Connect();
                         this.MergeBlocks[1].SetEnabled(false);
                     }
@@ -749,12 +869,12 @@ public class CrawlSlider: Slider {
             if(this.Speed > 0.0f) {
                 return "Expand: " + this.state;
             } else if(this.Speed < 0.0f) {
-                return "Retract" + this.state;
+                return "Retract: " + this.state;
             } else {
-                return "Immobile" + this.state;
+                return "Immobile: " + this.state;
             }
         } else {
-            return "Stopped";
+            return "Stopped: " + this.state;
         }
     }
 
@@ -841,7 +961,7 @@ enum Axis {
 }
 public List<Slider> BuildCrawlSliders(string root_name, Dictionary<IMyCubeGrid, List<Slider>> sliders_dict, List<IMyShipConnector> all_connectors, List<IMyShipMergeBlock> all_merge_blocks) {
     string base_name = root_name + " Crawl";
-    var names = new List<string>();
+    var names = new HashSet<string>();
     var all_sliders = new List<Slider>();
     foreach(var entry in sliders_dict) {
         foreach(var slider in entry.Value) {
@@ -1042,7 +1162,11 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
         sliders[i].AddRange(direct_sliders);
         var crawl_sliders = BuildCrawlSliders(name, pistons[(int)SliderType.Crawl][i], all_connectors, all_merge_blocks);
         Echo(crawl_sliders.Count + " crawl sliders segments");
-        sliders[i].AddRange(crawl_sliders);
+        // TODO: This is a hack. We should check is the sliders are related by either their bottom or top part (each of them could be in a different state).
+        if(crawl_sliders.Count > 0) {
+            var parallel_crawl_sliders = new Sliders(this, crawl_sliders);
+            sliders[i].Add(parallel_crawl_sliders);
+        }
     }
 
     var arm_x = new SliderChain(this, sliders[(int)Axis.X]);
@@ -1222,6 +1346,8 @@ public class Miner {
             if(this.PosI.Y == 0 || this.PosI.Y == this.MaxI.Y) {
                 velocity = this.VelocitySlow;
             }
+        } else {
+            velocity = this.VelocitySlow;
         }
         this.Arm.MoveTo(dst, velocity);
     }
@@ -1339,10 +1465,16 @@ public double Progress() {
 public void UpdateProgressScreen() {
     var progress = Progress() * 100;
     IMyTextSurface surface = Me.GetSurface(0);
-    var lines = new string[] {
+    var lines = new List<string>() {
         "Progress: " + progress.ToString("0.000") + "%",
     };
-    surface.WriteText(String.Join("\n", lines));
+    if(this.miners.Count == 1) {
+        var miner = this.miners[0];
+        lines.Add("X: " + miner.Arm.X.Pos.ToString("0.0") + "/" + miner.Arm.X.Max);
+        lines.Add("Y: " + miner.Arm.Y.Pos.ToString("0.0") + "/" + miner.Arm.Y.Max);
+        lines.Add("Z: " + miner.Arm.Z.Pos.ToString("0.0") + "/" + miner.Arm.Z.Max);
+    }
+    surface.WriteText(String.Join("\n", lines.ToArray()));
 }
 
 public void Main(string argument) {
