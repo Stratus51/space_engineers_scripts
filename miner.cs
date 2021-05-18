@@ -1313,23 +1313,70 @@ public class Miner {
         this.last_move = move;
 
         var dst = new Vector3D(this.Arm.Pos.X, this.Arm.Pos.Y, this.Arm.Pos.Z);
+        var inc = new Vector3D(0, 0, 0);
+        if(this.PosI.Y > 0) {
+            inc.Y = 0.1f;
+        }
+        if(this.PosI.Z > 0) {
+            inc.Z = 0.1f;
+        }
+        var expected = new Vector3D(
+            Math.Min((float)this.PosI.X*this.Step, this.Arm.Max.X),
+            Math.Min((float)this.PosI.Y*this.Step + inc.Y, this.Arm.Max.Y),
+            Math.Min((float)this.PosI.Z*this.DepthStep + inc.Z, this.Arm.Max.Z)
+        );
+        // TODO This is a hack too specific to our usecase!
+        if(expected.Z < this.Arm.Pos.Z) {
+            expected.Z = this.Arm.Pos.Z;
+        }
+        var velocity = this.Velocity;
         switch(move) {
             case EXTEND_X:
-                dst.X = this.Arm.X.Max;
+                expected.X = this.Arm.Pos.X;
+                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
+                    dst = expected;
+                    velocity = this.VelocitySlow;
+                } else {
+                    dst.X = this.Arm.X.Max;
+                }
                 break;
             case EXTEND_Y:
-                dst.Y = (float)(this.PosI.Y + 1) * this.Step + 0.1f;
+                expected.Y = this.Arm.Pos.Y;
+                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
+                    dst = expected;
+                    velocity = this.VelocitySlow;
+                } else {
+                    dst.Y = (float)(this.PosI.Y + 1) * this.Step + 0.1f;
+                }
                 break;
             case EXTEND_Z:
-                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep + 0.1f;
+                expected.Z = this.Arm.Pos.Z;
+                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
+                    dst = expected;
+                    velocity = this.VelocitySlow;
+                } else {
+                    dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep + 0.1f;
+                }
                 break;
             case RETRACT_X:
-                dst.X = 0.0;
+                expected.X = this.Arm.Pos.X;
+                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
+                    dst = expected;
+                    velocity = this.VelocitySlow;
+                } else {
+                    dst.X = 0.0;
+                }
                 break;
             case RETRACT_Y:
-                dst.Y = (float)(this.PosI.Y - 1) * this.Step;
-                if(dst.Y > 0.0f) {
-                    dst.Y += 0.1f;
+                expected.Y = this.Arm.Pos.Y;
+                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
+                    dst = expected;
+                    velocity = this.VelocitySlow;
+                } else {
+                    dst.Y = (float)(this.PosI.Y - 1) * this.Step;
+                    if(dst.Y > 0.0f) {
+                        dst.Y += 0.1f;
+                    }
                 }
                 break;
             case RETRACT_Z:
@@ -1341,7 +1388,6 @@ public class Miner {
             default:
                 break;
         }
-        var velocity = this.Velocity;
         if(move == EXTEND_X || move == RETRACT_X) {
             if(this.PosI.Y == 0 || this.PosI.Y == this.MaxI.Y) {
                 velocity = this.VelocitySlow;
