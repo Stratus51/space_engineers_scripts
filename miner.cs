@@ -111,6 +111,8 @@ public class Piston: Slider {
 
         this.Min = 0;
         this.Max = piston.HighestPosition;
+        // TODO Hack. Tolerances should be detected automatically.
+        this.Max = 9.7f;
         this.piston = piston;
         this.Refresh();
     }
@@ -671,7 +673,7 @@ public class CrawlSlider: Slider {
     }
 
     public void MoveTo(float pos, float speed) {
-        if(pos > this.Pos) {
+        if(pos >= this.Pos) {
             var slider_target = Math.Min(10f, pos - this.Pos + this.Slider.Pos);
             Echo("MoveTo: " + this.Pos + " => " + pos + " @ " + speed);
             Echo("Target " + slider_target + " @ " + speed);
@@ -852,7 +854,15 @@ public class CrawlSlider: Slider {
                     break;
             }
         } else {
-            throw new Exception("Negative speed not implemented (crawl slider)");
+            var slider_target = Math.Min(10f, pos - this.Pos + this.Slider.Pos);
+            Echo("Target " + slider_target + " @ " + speed);
+            // TODO
+            switch(this.state) {
+                case State.TranslatingLoad:
+                    this.Slider.MoveTo(slider_target, speed);
+                    break;
+            }
+            // throw new Exception("Negative speed not implemented (crawl slider)");
         }
     }
 
@@ -1237,6 +1247,17 @@ public class Miner {
         this.PosI.X = (int)(this.Arm.Pos.X / this.Step);
         this.PosI.Y = (int)(this.Arm.Pos.Y / this.Step);
         this.PosI.Z = (int)(this.Arm.Pos.Z / this.DepthStep);
+
+        // TODO Proper calculus
+        if(this.Arm.Pos.X >= this.Arm.Max.X) {
+            this.PosI.X = this.MaxI.X;
+        }
+        if(this.Arm.Pos.Y >= this.Arm.Max.Y) {
+            this.PosI.Y = this.MaxI.Y;
+        }
+        if(this.Arm.Pos.Z >= this.Arm.Max.Z) {
+            this.PosI.Z = this.MaxI.Z;
+        }
     }
 
     public int SelectMove() {
