@@ -549,7 +549,7 @@ const float CRAWL_MIN = 2.4f;
 const float CRAWL_MAX = 9.8f;
 const float CRAWL_RETRACT_SPEED = 3f;
 const float CRAWL_GRIND_TIME = 2f;
-const float MERGE_BLOCK_MIN_DIST = 0.5f;
+const float MERGE_BLOCK_MIN_DIST = 2f;
 
 public class CrawlSlider: Slider {
     public float Pos {get;set;}
@@ -1458,6 +1458,7 @@ public Program() {
     surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
 
     Runtime.UpdateFrequency |= UpdateFrequency.Update100;
+    // Runtime.UpdateFrequency |= UpdateFrequency.Update1;
 }
 
 public void InitMiners(string name_prefix, float velocity, float step, float depth_step) {
