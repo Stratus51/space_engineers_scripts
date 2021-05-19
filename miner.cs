@@ -280,7 +280,6 @@ public class Sliders: Slider {
     public float Max {get;}
     public float Speed {get; set;}
     public List<Slider> List;
-    List<float> Offsets;
     bool Enabled;
 
     public Sliders(Program program, List<Slider> sliders) {
@@ -296,11 +295,6 @@ public class Sliders: Slider {
             }
         }
 
-        this.Offsets = new List<float>();
-        var pos = sliders[0].Pos;
-        foreach(var slider in sliders) {
-            this.Offsets.Add(slider.Pos - pos);
-        }
         this.Refresh();
     }
 
@@ -317,11 +311,6 @@ public class Sliders: Slider {
             }
         }
         this.Pos = pos;
-
-        for(var i = 0; i < this.List.Count; i++) {
-            var slider = this.List[i];
-            this.Offsets[i] = slider.Pos - pos;
-        }
     }
 
     public bool Sync() {
@@ -374,10 +363,8 @@ public class Sliders: Slider {
 
     public void MoveTo(float pos, float speed) {
         // this.Echo("MoveTo[" + this.List.Count + "](" + pos + ", " + speed + ")");
-        for(var i = 0; i < this.List.Count; i++) {
-            var slider = this.List[i];
-            var offset = this.Offsets[i];
-            slider.MoveTo(pos + offset, speed);
+        foreach(var slider in this.List) {
+            slider.MoveTo(pos, speed);
         }
         this.Speed = this.List[0].Speed;
     }
@@ -1126,13 +1113,13 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
                     if(!per_grid.ContainsKey(cube_grid)) {
                         per_grid.Add(cube_grid, new List<Slider>());
                     }
-                    Slider slider;
                     if(direction == SliderDirection.Positive) {
-                        slider = new Piston(this, piston);
+                        var slider = new Piston(this, piston);
+                        per_grid[cube_grid].Insert(0, slider);
                     } else {
-                        slider = new ReverseSlider<Piston>(new Piston(this, piston));
+                        var slider = new ReverseSlider<Piston>(new Piston(this, piston));
+                        per_grid[cube_grid].Add(slider);
                     }
-                    per_grid[cube_grid].Add(slider);
                 }
             }
         }
@@ -1244,20 +1231,36 @@ public class Miner {
 
     public void Refresh() {
         this.Arm.Refresh();
-        this.PosI.X = (int)(this.Arm.Pos.X / this.Step);
-        this.PosI.Y = (int)(this.Arm.Pos.Y / this.Step);
-        this.PosI.Z = (int)(this.Arm.Pos.Z / this.DepthStep);
 
-        // TODO Proper calculus
+        int x;
+        int y;
+        int z = (int)(this.Arm.Pos.Z / this.DepthStep);
+        bool y_extend = (z % 2 == 0);
+        bool x_extend;
+        if(y_extend) {
+            y = (int)(this.Arm.Pos.Y / this.Step);
+            x_extend = (y % 2 == 0);
+        } else {
+            y = (int)((this.Arm.Pos.Y + this.Step - 0.1f) / this.Step);
+            x_extend = !(y % 2 == 0);
+        }
+        if(x_extend) {
+            x = (int)(this.Arm.Pos.X / this.Step);
+        } else {
+            x = (int)((this.Arm.Pos.X + this.Step - 0.1f) / this.Step);
+        }
         if(this.Arm.Pos.X >= this.Arm.Max.X) {
-            this.PosI.X = this.MaxI.X;
+            x = this.MaxI.X;
         }
         if(this.Arm.Pos.Y >= this.Arm.Max.Y) {
-            this.PosI.Y = this.MaxI.Y;
+            y = this.MaxI.Y;
         }
         if(this.Arm.Pos.Z >= this.Arm.Max.Z) {
-            this.PosI.Z = this.MaxI.Z;
+            z = this.MaxI.Z;
         }
+        this.PosI.X = x;
+        this.PosI.Y = y;
+        this.PosI.Z = z;
     }
 
     public int SelectMove() {
@@ -1334,77 +1337,25 @@ public class Miner {
         this.last_move = move;
 
         var dst = new Vector3D(this.Arm.Pos.X, this.Arm.Pos.Y, this.Arm.Pos.Z);
-        var inc = new Vector3D(0, 0, 0);
-        if(this.PosI.Y > 0) {
-            inc.Y = 0.1f;
-        }
-        if(this.PosI.Z > 0) {
-            inc.Z = 0.1f;
-        }
-        var expected = new Vector3D(
-            Math.Min((float)this.PosI.X*this.Step, this.Arm.Max.X),
-            Math.Min((float)this.PosI.Y*this.Step + inc.Y, this.Arm.Max.Y),
-            Math.Min((float)this.PosI.Z*this.DepthStep + inc.Z, this.Arm.Max.Z)
-        );
-        // TODO This is a hack too specific to our usecase!
-        if(expected.Z < this.Arm.Pos.Z) {
-            expected.Z = this.Arm.Pos.Z;
-        }
         var velocity = this.Velocity;
         switch(move) {
             case EXTEND_X:
-                expected.X = this.Arm.Pos.X;
-                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
-                    dst = expected;
-                    velocity = this.VelocitySlow;
-                } else {
-                    dst.X = this.Arm.X.Max;
-                }
+                dst.X = this.Arm.X.Max;
                 break;
             case EXTEND_Y:
-                expected.Y = this.Arm.Pos.Y;
-                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
-                    dst = expected;
-                    velocity = this.VelocitySlow;
-                } else {
-                    dst.Y = (float)(this.PosI.Y + 1) * this.Step + 0.1f;
-                }
+                dst.Y = (float)(this.PosI.Y + 1) * this.Step;
                 break;
             case EXTEND_Z:
-                expected.Z = this.Arm.Pos.Z;
-                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
-                    dst = expected;
-                    velocity = this.VelocitySlow;
-                } else {
-                    dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep + 0.1f;
-                }
+                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep;
                 break;
             case RETRACT_X:
-                expected.X = this.Arm.Pos.X;
-                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
-                    dst = expected;
-                    velocity = this.VelocitySlow;
-                } else {
-                    dst.X = 0.0;
-                }
+                dst.X = 0.0;
                 break;
             case RETRACT_Y:
-                expected.Y = this.Arm.Pos.Y;
-                if(Vector3D.Distance(expected, this.Arm.Pos) > 0.2) {
-                    dst = expected;
-                    velocity = this.VelocitySlow;
-                } else {
-                    dst.Y = (float)(this.PosI.Y - 1) * this.Step;
-                    if(dst.Y > 0.0f) {
-                        dst.Y += 0.1f;
-                    }
-                }
+                dst.Y = (float)(this.PosI.Y - 1) * this.Step;
                 break;
             case RETRACT_Z:
                 dst.Z = (float)(this.PosI.Z - 1) * this.DepthStep;
-                if(dst.Z > 0.0f) {
-                    dst.Z += 0.1f;
-                }
                 break;
             default:
                 break;
