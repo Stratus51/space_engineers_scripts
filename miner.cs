@@ -1249,13 +1249,23 @@ public class Miner {
         int x;
         int y;
         int z = (int)(this.Arm.Pos.Z / this.DepthStep);
+        if(z < this.PosI.Z) {
+            z = this.PosI.Z;
+        }
+
         bool y_extend = (z % 2 == 0);
         bool x_extend;
         if(y_extend) {
             y = (int)(this.Arm.Pos.Y / this.Step);
+            if(y < this.PosI.Y) {
+                y = this.PosI.Y;
+            }
             x_extend = (y % 2 == 0);
         } else {
             y = (int)((this.Arm.Pos.Y + this.Step - 0.1f) / this.Step);
+            if(y > this.PosI.Y) {
+                y = this.PosI.Y;
+            }
             x_extend = !(y % 2 == 0);
         }
         if(x_extend) {
@@ -1357,19 +1367,19 @@ public class Miner {
                 dst.X = this.Arm.X.Max;
                 break;
             case EXTEND_Y:
-                dst.Y = (float)(this.PosI.Y + 1) * this.Step;
+                dst.Y = (float)(this.PosI.Y + 1) * this.Step + 0.1f;
                 break;
             case EXTEND_Z:
-                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep;
+                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep + 0.1f;
                 break;
             case RETRACT_X:
                 dst.X = 0.0;
                 break;
             case RETRACT_Y:
-                dst.Y = (float)(this.PosI.Y - 1) * this.Step;
+                dst.Y = (float)(this.PosI.Y - 1) * this.Step - 0.1f;
                 break;
             case RETRACT_Z:
-                dst.Z = (float)(this.PosI.Z - 1) * this.DepthStep;
+                dst.Z = (float)(this.PosI.Z - 1) * this.DepthStep - 0.1f;
                 break;
             default:
                 break;
