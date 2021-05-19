@@ -580,6 +580,7 @@ public class CrawlSlider: Slider {
         MergeBottomSlideDown,
         LockingBottomConnector,
         UnlockingBottomMergeBlock,
+        RewindLoad,
     }
     State state;
 
@@ -830,6 +831,17 @@ public class CrawlSlider: Slider {
                     break;
                 case State.UnlockingBottomMergeBlock:
                     if(this.MergeBlocks[1].IsDisabled()) {
+                        this.state = State.RewindLoad;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(false);
+                    }
+                    break;
+                case State.RewindLoad:
+                    if(this.Slider.Pos <= CRAWL_MIN - 0.1f) {
                         this.state = State.TranslatingLoad;
                         this.MoveTo(pos, speed);
                     } else {
@@ -837,6 +849,8 @@ public class CrawlSlider: Slider {
                         this.Connectors[0].Connect();
                         this.Connectors[1].Connect();
                         this.MergeBlocks[1].SetEnabled(false);
+
+                        this.Slider.MoveTo(CRAWL_MIN - 0.1f, 0.5f);
                     }
                     break;
             }
