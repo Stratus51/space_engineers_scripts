@@ -549,7 +549,7 @@ const float CRAWL_MIN = 2.4f;
 const float CRAWL_MAX = 9.8f;
 const float CRAWL_RETRACT_SPEED = 3f;
 const float CRAWL_GRIND_TIME = 2f;
-const float CRAWL_SLOW_SPEED = 0.2f;
+const float CRAWL_SLOW_SPEED = 0.5f;
 const float MERGE_BLOCK_MIN_DIST = 2f;
 
 public class CrawlSlider: Slider {
@@ -896,7 +896,6 @@ public class CrawlSlider: Slider {
                 case State.RewindLoad:
                     if(this.Slider.Pos <= CRAWL_MIN - 0.1f) {
                         this.state = State.TranslatingLoad;
-                        this.MoveTo(pos, speed);
                     } else {
                         this.MergeBlocks[0].SetEnabled(true);
                         this.Connectors[0].Connect();
