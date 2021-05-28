@@ -794,13 +794,13 @@ public class CrawlSlider: Slider {
                         this.MoveTo(pos, speed);
                     } else {
                         var target = CRAWL_MIN + MERGE_BLOCK_MIN_DIST;
-                        if(this.Slider.Pos > target) {
+                        if(this.Slider.Pos < target) {
                             this.MergeBlocks[0].SetEnabled(true);
                             this.Connectors[0].Disconnect();
                             this.Connectors[1].Connect();
                             this.MergeBlocks[1].SetEnabled(true);
 
-                            this.Slider.MoveTo(target - 0.05f, CRAWL_SLOW_SPEED);
+                            this.Slider.MoveTo(target + 0.05f, CRAWL_SLOW_SPEED);
                         } else {
                             this.state = State.MergeBottomSlideUp;
                             this.MoveTo(pos, speed);
@@ -813,13 +813,13 @@ public class CrawlSlider: Slider {
                         this.MoveTo(pos, speed);
                     } else {
                         var target = CRAWL_MIN;
-                        if(this.Slider.Pos < target) {
+                        if(this.Slider.Pos > target) {
                             this.MergeBlocks[0].SetEnabled(true);
                             this.Connectors[0].Disconnect();
                             this.Connectors[1].Connect();
                             this.MergeBlocks[1].SetEnabled(true);
 
-                            this.Slider.MoveTo(target + 0.05f, CRAWL_SLOW_SPEED);
+                            this.Slider.MoveTo(target - 0.05f, CRAWL_SLOW_SPEED);
                         } else {
                             this.state = State.MergeBottomSlideDown;
                             this.MoveTo(pos, speed);
@@ -1246,12 +1246,14 @@ public const int RETRACT_X = 3;
 public const int RETRACT_Y = 4;
 public const int RETRACT_Z = 5;
 public const int CENTERING = 6;
+public const float SLOW_Z_SPEED = 0.5f;
 
 public class Miner {
     public Arm Arm;
     public Vector3I PosI;
     public Vector3I MaxI;
-    public List<IMyShipDrill> Drills;
+    public IMyShipDrill[] Drills;
+    public IMyFunctionalBlock[] Systems;
     Program Program;
     int last_move;
     Vector3D Velocity;
@@ -1263,14 +1265,16 @@ public class Miner {
     float MaxFill;
     float MinFill;
     bool Mining;
+    bool Damaged;
 
-    public Miner(Program program, string name, List<IMyShipDrill> drills, float velocity, float step, float depth_step, float max_fill, float min_fill) {
+    public Miner(Program program, string name, IMyShipDrill[] drills, IMyFunctionalBlock[] systems, float velocity, float step, float depth_step, float max_fill, float min_fill) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, drills[0]);
         this.Drills = drills;
+        this.Systems = systems;
         this.Velocity = new Vector3D(velocity, velocity/2.0, velocity);
-        this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, velocity);
+        this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, Math.Min(SLOW_Z_SPEED, velocity/2.0));
         this.Step = step;
         this.DepthStep = depth_step;
         this.last_move = 0;
@@ -1280,6 +1284,7 @@ public class Miner {
         this.MaxFill = max_fill;
         this.MinFill = min_fill;
         this.Mining = false;
+        this.Damaged = false;
 
         this.MaxVolume = 0.0f;
         foreach(var drill in this.Drills) {
@@ -1295,7 +1300,33 @@ public class Miner {
         return ret;
     }
 
+    void RefreshDamaged() {
+        this.Damaged = false;
+        var first_inv = this.Drills[0].GetInventory();
+        foreach(var drill in this.Drills) {
+            var slim = drill.CubeGrid.GetCubeBlock(drill.Position);
+            if(slim.CurrentDamage > 0 || !drill.GetInventory().IsConnectedTo(first_inv)) {
+                Echo("damage: " + slim.CurrentDamage + "; connected: " + drill.GetInventory().IsConnectedTo(first_inv));
+                this.Damaged = true;
+                break;
+            }
+        }
+        foreach(var system in this.Systems) {
+            var slim = system.CubeGrid.GetCubeBlock(system.Position);
+            var connected = true;
+            if(system.GetInventory() != null) {
+                connected = system.GetInventory().IsConnectedTo(first_inv);
+            }
+            if(slim.CurrentDamage > 0 || !connected) {
+                Echo("damage: " + slim.CurrentDamage + "; connected: " + connected);
+                this.Damaged = true;
+                break;
+            }
+        }
+    }
+
     public void Refresh() {
+        this.RefreshDamaged();
         this.Arm.Refresh();
 
         int x;
@@ -1394,16 +1425,21 @@ public class Miner {
     }
 
     public void Run() {
+        if(this.Damaged) {
+            if(this.Mining) {
+                this.Stop();
+            }
+            return;
+        }
+
         if(this.Mining) {
             if(this.CurrentVolume() >= this.MaxVolume * this.MaxFill) {
                 this.Stop();
-                this.Mining = false;
                 return;
             }
         } else {
             if(this.CurrentVolume() <= this.MaxVolume * this.MinFill) {
                 this.Start();
-                this.Mining = true;
             } else {
                 return;
             }
@@ -1452,6 +1488,10 @@ public class Miner {
         foreach(var drill in this.Drills) {
             drill.Enabled = true;
         }
+        foreach(var system in this.Systems) {
+            system.Enabled = true;
+        }
+        this.Mining = true;
     }
 
     public void Stop() {
@@ -1460,13 +1500,19 @@ public class Miner {
         foreach(var drill in this.Drills) {
             drill.Enabled = false;
         }
+        foreach(var system in this.Systems) {
+            system.Enabled = false;
+        }
+        this.Mining = false;
     }
 
     public void Print() {
         Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
         Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
         Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
-        if(this.Mining) {
+        if(this.Damaged) {
+            Echo("Damaged!");
+        } else if(this.Mining) {
             switch(this.last_move) {
                 case EXTEND_X:
                     Echo("Moving: X+ " + this.Arm.X.StateToString());
@@ -1515,7 +1561,25 @@ public Miner GetMiner(string name, float velocity, float step, float depth_step)
         return null;
     }
 
-    var miner = new Miner(this, name, drills, velocity, step, depth_step, MaxFill, MinFill);
+    var systems = new List<IMyFunctionalBlock>();
+
+    var grinder_list = new List<IMyShipGrinder>();
+    GridTerminalSystem.GetBlocksOfType<IMyShipGrinder>(grinder_list);
+    foreach(var system in grinder_list) {
+        if(system.CustomName == name) {
+            systems.Add(system);
+        }
+    }
+
+    var welder_list = new List<IMyShipWelder>();
+    GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(welder_list);
+    foreach(var system in welder_list) {
+        if(system.CustomName == name) {
+            systems.Add(system);
+        }
+    }
+
+    var miner = new Miner(this, name, drills.ToArray(), systems.ToArray(), velocity, step, depth_step, MaxFill, MinFill);
     if(miner.Arm.Empty()) {
         Echo(name + " has no arm. Not a miner.");
         return null;
