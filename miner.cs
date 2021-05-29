@@ -312,6 +312,7 @@ public class Sliders: Slider {
     }
 
     public void Refresh() {
+        this.List[0].Refresh();
         var pos = this.List[0].Pos;
         foreach(var slider in this.List) {
             slider.Refresh();
