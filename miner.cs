@@ -1283,7 +1283,6 @@ public const int RETRACT_Y = 4;
 public const int RETRACT_Z = 5;
 public const int CENTERING = 6;
 public const float SLOW_DRILL_SPEED = 0.2f;
-public const uint TURNING_TIME = 4;
 
 public class Miner {
     public Arm Arm;
@@ -1305,7 +1304,6 @@ public class Miner {
     float MinFill;
     public bool Mining;
     public bool Damaged;
-    uint RemainingTurningTime;
 
     public Miner(Program program, string name, IMyShipDrill[] drills, IMyFunctionalBlock[] systems, float velocity, float step, float depth_step, float max_fill, float min_fill) {
         this.Program = program;
@@ -1347,8 +1345,9 @@ public class Miner {
         var first_inv = this.Drills[0].GetInventory();
         foreach(var drill in this.Drills) {
             var slim = drill.CubeGrid.GetCubeBlock(drill.Position);
-            if(slim.CurrentDamage > 0 || !drill.GetInventory().IsConnectedTo(first_inv)) {
-                Echo("Drill: damage: " + slim.CurrentDamage + "; connected: " + drill.GetInventory().IsConnectedTo(first_inv));
+            var connected = drill.GetInventory().IsConnectedTo(first_inv);
+            if(slim.CurrentDamage > 0 || !connected) {
+                Echo("Drill: damage: " + slim.CurrentDamage + "; connected: " + connected);
                 this.Damaged = true;
                 break;
             }
@@ -1483,57 +1482,49 @@ public class Miner {
         }
 
         if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2) {
-            if(this.RemainingTurningTime > 0) {
-                this.RemainingTurningTime--;
-            } else {
-                var move = this.SelectMove();
+            var move = this.SelectMove();
 
-                // if(this.last_move % 3 != move % 3 && move != EXTEND_Z) {
-                //     this.RemainingTurningTime = TURNING_TIME;
-                // }
+            this.last_move = move;
 
-                this.last_move = move;
-
-                switch(move) {
-                    case EXTEND_X:
-                        if(this.PosI.X == this.MaxI.X - 1) {
-                            this.PosI.X = this.MaxI.X;
-                            this.CurrentVelocity = this.VelocitySlow;
-                        } else {
-                            this.PosI.X = this.MaxI.X - 1;
-                            this.CurrentVelocity = this.Velocity;
-                        }
-                        break;
-                    case EXTEND_Y:
-                        this.PosI.Y += 1;
+            switch(move) {
+                case EXTEND_X:
+                    if(this.PosI.X == this.MaxI.X - 1) {
+                        this.PosI.X = this.MaxI.X;
                         this.CurrentVelocity = this.VelocitySlow;
-                        break;
-                    case EXTEND_Z:
-                        this.PosI.Z += 1;
+                    } else {
+                        this.PosI.X = this.MaxI.X - 1;
+                        this.CurrentVelocity = this.Velocity;
+                    }
+                    break;
+                case EXTEND_Y:
+                    this.PosI.Y += 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                case EXTEND_Z:
+                    this.PosI.Z += 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                case RETRACT_X:
+                    if(this.PosI.X == 1) {
+                        this.PosI.X = 0;
                         this.CurrentVelocity = this.VelocitySlow;
-                        break;
-                    case RETRACT_X:
-                        if(this.PosI.X == 1) {
-                            this.PosI.X = 0;
-                            this.CurrentVelocity = this.VelocitySlow;
-                        } else {
-                            this.PosI.X = 1;
-                            this.CurrentVelocity = this.Velocity;
-                        }
-                        break;
-                    case RETRACT_Y:
-                        this.PosI.Y -= 1;
-                        this.CurrentVelocity = this.VelocitySlow;
-                        break;
-                    case RETRACT_Z:
-                        this.PosI.Z -= 1;
-                        this.CurrentVelocity = this.VelocitySlow;
-                        break;
-                    default:
-                        break;
-                }
-                this.RefreshDst();
+                    } else {
+                        this.PosI.X = 1;
+                        this.CurrentVelocity = this.Velocity;
+                    }
+                    break;
+                case RETRACT_Y:
+                    this.PosI.Y -= 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                case RETRACT_Z:
+                    this.PosI.Z -= 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                default:
+                    break;
             }
+            this.RefreshDst();
         }
         this.Arm.MoveTo(this.Dst, this.CurrentVelocity);
     }
@@ -1569,31 +1560,27 @@ public class Miner {
         if(this.Damaged) {
             Echo("Damaged!");
         } else if(this.Mining) {
-            if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2 && this.RemainingTurningTime > 0) {
-                Echo("Waiting for deeper drill");
-            } else {
-                switch(this.last_move) {
-                    case EXTEND_X:
-                        Echo("Moving: X+ " + this.Arm.X.StateToString());
-                        break;
-                    case EXTEND_Y:
-                        Echo("Moving: Y+ " + this.Arm.Y.StateToString());
-                        break;
-                    case EXTEND_Z:
-                        Echo("Moving: Z+ " + this.Arm.Z.StateToString());
-                        break;
-                    case RETRACT_X:
-                        Echo("Moving: X- " + this.Arm.X.StateToString());
-                        break;
-                    case RETRACT_Y:
-                        Echo("Moving: Y- " + this.Arm.Y.StateToString());
-                        break;
-                    case RETRACT_Z:
-                        Echo("Moving: Z- " + this.Arm.Z.StateToString());
-                        break;
-                    default:
-                        break;
-                }
+            switch(this.last_move) {
+                case EXTEND_X:
+                    Echo("Moving: X+ " + this.Arm.X.StateToString());
+                    break;
+                case EXTEND_Y:
+                    Echo("Moving: Y+ " + this.Arm.Y.StateToString());
+                    break;
+                case EXTEND_Z:
+                    Echo("Moving: Z+ " + this.Arm.Z.StateToString());
+                    break;
+                case RETRACT_X:
+                    Echo("Moving: X- " + this.Arm.X.StateToString());
+                    break;
+                case RETRACT_Y:
+                    Echo("Moving: Y- " + this.Arm.Y.StateToString());
+                    break;
+                case RETRACT_Z:
+                    Echo("Moving: Z- " + this.Arm.Z.StateToString());
+                    break;
+                default:
+                    break;
             }
         } else {
             Echo("Stopped mining");
