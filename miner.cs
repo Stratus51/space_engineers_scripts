@@ -694,9 +694,8 @@ public class CrawlSlider: Slider {
 
     public void MoveTo(float pos, float speed) {
         var slider_target = Math.Min(10f, pos - this.Pos + this.Slider.Pos);
-        Echo("MoveTo: " + this.Pos + " => " + pos + " @ " + speed);
-        Echo("Target " + slider_target + " @ " + speed);
-        Echo("Slider: " + this.Slider.Pos);
+        Echo("MoveTo: " + this.Pos + " => " + pos);
+        Echo("Target " + slider_target);
         if(pos >= this.Pos) {
             Echo("State: " + this.state);
             this.Speed = speed;
@@ -1009,7 +1008,6 @@ public class Arm {
     public void MoveTo(Vector3D pos, Vector3D speed) {
         Echo("MoveTo:  " + VectorToString(this.Pos));
         Echo("      => " + VectorToString(pos));
-        Echo("      @  " + VectorToString(speed));
         this.X.MoveTo((float)pos.X, (float)speed.X);
         this.Y.MoveTo((float)pos.Y, (float)speed.Y);
         this.Z.MoveTo((float)pos.Z, (float)speed.Z);
@@ -1284,8 +1282,8 @@ public const int RETRACT_X = 3;
 public const int RETRACT_Y = 4;
 public const int RETRACT_Z = 5;
 public const int CENTERING = 6;
-public const float SLOW_Z_SPEED = 0.2f;
-public const uint TURNING_TIME = 2;
+public const float SLOW_DRILL_SPEED = 0.2f;
+public const uint TURNING_TIME = 4;
 
 public class Miner {
     public Arm Arm;
@@ -1296,15 +1294,17 @@ public class Miner {
     public IMyFunctionalBlock[] Systems;
     Program Program;
     int last_move;
+    Vector3D CurrentVelocity;
     Vector3D Velocity;
+    Vector3D VelocitySlow;
     float Step;
     float DepthStep;
     string Name;
     float MaxVolume;
     float MaxFill;
     float MinFill;
-    bool Mining;
-    bool Damaged;
+    public bool Mining;
+    public bool Damaged;
     uint RemainingTurningTime;
 
     public Miner(Program program, string name, IMyShipDrill[] drills, IMyFunctionalBlock[] systems, float velocity, float step, float depth_step, float max_fill, float min_fill) {
@@ -1313,7 +1313,8 @@ public class Miner {
         this.Arm = program.BuildArmFromName(name, drills[0]);
         this.Drills = drills;
         this.Systems = systems;
-        this.Velocity = new Vector3D(velocity, velocity, Math.Min(SLOW_Z_SPEED, velocity/2.0));
+        this.Velocity = new Vector3D(velocity, velocity, SLOW_DRILL_SPEED);
+        this.VelocitySlow = new Vector3D(SLOW_DRILL_SPEED, SLOW_DRILL_SPEED, SLOW_DRILL_SPEED);
         this.Step = step;
         this.DepthStep = depth_step;
         this.last_move = 0;
@@ -1391,6 +1392,7 @@ public class Miner {
         this.PosI.X = x;
         this.PosI.Y = y;
         this.PosI.Z = z;
+        this.CurrentVelocity = this.Velocity;
         this.RefreshDst();
     }
 
@@ -1486,30 +1488,46 @@ public class Miner {
             } else {
                 var move = this.SelectMove();
 
-                if(this.last_move % 3 != move % 3) {
-                    this.RemainingTurningTime = TURNING_TIME;
-                }
+                // if(this.last_move % 3 != move % 3 && move != EXTEND_Z) {
+                //     this.RemainingTurningTime = TURNING_TIME;
+                // }
 
                 this.last_move = move;
 
                 switch(move) {
                     case EXTEND_X:
-                        this.PosI.X = this.MaxI.X;
+                        if(this.PosI.X == this.MaxI.X - 1) {
+                            this.PosI.X = this.MaxI.X;
+                            this.CurrentVelocity = this.VelocitySlow;
+                        } else {
+                            this.PosI.X = this.MaxI.X - 1;
+                            this.CurrentVelocity = this.Velocity;
+                        }
                         break;
                     case EXTEND_Y:
                         this.PosI.Y += 1;
+                        this.CurrentVelocity = this.VelocitySlow;
                         break;
                     case EXTEND_Z:
                         this.PosI.Z += 1;
+                        this.CurrentVelocity = this.VelocitySlow;
                         break;
                     case RETRACT_X:
-                        this.PosI.X = 0;
+                        if(this.PosI.X == 1) {
+                            this.PosI.X = 0;
+                            this.CurrentVelocity = this.VelocitySlow;
+                        } else {
+                            this.PosI.X = 1;
+                            this.CurrentVelocity = this.Velocity;
+                        }
                         break;
                     case RETRACT_Y:
                         this.PosI.Y -= 1;
+                        this.CurrentVelocity = this.VelocitySlow;
                         break;
                     case RETRACT_Z:
                         this.PosI.Z -= 1;
+                        this.CurrentVelocity = this.VelocitySlow;
                         break;
                     default:
                         break;
@@ -1517,7 +1535,7 @@ public class Miner {
                 this.RefreshDst();
             }
         }
-        this.Arm.MoveTo(this.Dst, this.Velocity);
+        this.Arm.MoveTo(this.Dst, this.CurrentVelocity);
     }
 
     public void Start() {
@@ -1674,6 +1692,11 @@ public void UpdateProgressScreen() {
         lines.Add("X: " + miner.Arm.X.Pos.ToString("0.0") + "/" + miner.Arm.X.Max);
         lines.Add("Y: " + miner.Arm.Y.Pos.ToString("0.0") + "/" + miner.Arm.Y.Max);
         lines.Add("Z: " + miner.Arm.Z.Pos.ToString("0.0") + "/" + miner.Arm.Z.Max);
+        if(miner.Damaged) {
+            lines.Add("/!\\ Damaged /!\\");
+        } else if(!miner.Mining) {
+            lines.Add("Drills full. Paused.");
+        }
     }
     surface.WriteText(String.Join("\n", lines.ToArray()));
 }
