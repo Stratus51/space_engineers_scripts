@@ -656,13 +656,9 @@ public class CrawlSlider: Slider {
                 this.LastPos = this.Pos;
                 break;
             default:
+                // Make the exterior think we are immobile while transitionning.
                 this.Pos = this.LastPos;
                 break;
-        }
-
-        // Make the exterior think we are immobile while merging the load.
-        if(this.state == State.MergeTopSlideUp || this.state == State.MergeTopSlideDown) {
-            this.Pos += CRAWL_MAX - this.Slider.Pos;
         }
     }
 
