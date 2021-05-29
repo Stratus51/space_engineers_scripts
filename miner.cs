@@ -578,7 +578,7 @@ const float CRAWL_MAX = 9.8f;
 const float CRAWL_RETRACT_SPEED = 0.5f;
 const float CRAWL_GRIND_TIME = 2f;
 const float CRAWL_SLOW_SPEED = 0.5f;
-const float MERGE_BLOCK_MIN_DIST = 1f;
+const float MERGE_BLOCK_MIN_DIST = 1.5f;
 
 public class CrawlSlider: Slider {
     float LastPos;
