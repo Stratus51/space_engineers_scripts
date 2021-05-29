@@ -25,6 +25,7 @@ public interface Slider {
     Vector3D WorldPosition();
     Vector3D WorldDirection();
     string StateToString();
+    bool IsStable();
 }
 
 public class ReverseSlider<T>: Slider where T : Slider {
@@ -95,6 +96,10 @@ public class ReverseSlider<T>: Slider where T : Slider {
 
     public string StateToString() {
         return "[Reversed] " + this.Slider.StateToString();
+    }
+
+    public bool IsStable() {
+        return this.Slider.IsStable();
     }
 }
 
@@ -183,6 +188,10 @@ public class Piston: Slider {
         } else {
             return "Stopped";
         }
+    }
+
+    public bool IsStable() {
+        return true;
     }
 }
 
@@ -395,6 +404,15 @@ public class Sliders: Slider {
     void Echo(string s) {
         this.Program.Echo("Sliders: " + s);
     }
+
+    public bool IsStable() {
+        foreach(var slider in this.List) {
+            if(!slider.IsStable()) {
+                return false;
+            }
+        }
+        return true;
+    }
 }
 
 public class SliderChain: Slider {
@@ -542,6 +560,15 @@ public class SliderChain: Slider {
 
     void Echo(string s) {
         this.Program.Echo("SliderChain: " + s);
+    }
+
+    public bool IsStable() {
+        foreach(var slider in this.List) {
+            if(!slider.IsStable()) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
@@ -944,6 +971,10 @@ public class CrawlSlider: Slider {
     void Echo(string s) {
         this.Program.Echo("Crawl: " + s);
     }
+
+    public bool IsStable() {
+        return this.state == State.TranslatingLoad;
+    }
 }
 
 public class Arm {
@@ -998,6 +1029,10 @@ public class Arm {
 
     public void Echo(string s) {
         this.Program.Echo("Arm: " + s);
+    }
+
+    public bool IsStable() {
+        return this.X.IsStable() && this.Y.IsStable() && this.Z.IsStable();
     }
 }
 
@@ -1273,7 +1308,7 @@ public class Miner {
         this.Arm = program.BuildArmFromName(name, drills[0]);
         this.Drills = drills;
         this.Systems = systems;
-        this.Velocity = new Vector3D(velocity, velocity/2.0, velocity);
+        this.Velocity = new Vector3D(velocity, velocity/2.0, Math.Min(SLOW_Z_SPEED, velocity/2.0));
         this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, Math.Min(SLOW_Z_SPEED, velocity/2.0));
         this.Step = step;
         this.DepthStep = depth_step;
@@ -1306,7 +1341,7 @@ public class Miner {
         foreach(var drill in this.Drills) {
             var slim = drill.CubeGrid.GetCubeBlock(drill.Position);
             if(slim.CurrentDamage > 0 || !drill.GetInventory().IsConnectedTo(first_inv)) {
-                Echo("damage: " + slim.CurrentDamage + "; connected: " + drill.GetInventory().IsConnectedTo(first_inv));
+                Echo("Drill: damage: " + slim.CurrentDamage + "; connected: " + drill.GetInventory().IsConnectedTo(first_inv));
                 this.Damaged = true;
                 break;
             }
@@ -1314,11 +1349,13 @@ public class Miner {
         foreach(var system in this.Systems) {
             var slim = system.CubeGrid.GetCubeBlock(system.Position);
             var connected = true;
-            if(system.GetInventory() != null) {
-                connected = system.GetInventory().IsConnectedTo(first_inv);
+            if(this.Arm.IsStable()) {
+                if(system.GetInventory() != null) {
+                    connected = system.GetInventory().IsConnectedTo(first_inv);
+                }
             }
             if(slim.CurrentDamage > 0 || !connected) {
-                Echo("damage: " + slim.CurrentDamage + "; connected: " + connected);
+                Echo(system.BlockDefinition.SubtypeName + ": damage: " + slim.CurrentDamage + "; connected: " + connected);
                 this.Damaged = true;
                 break;
             }
