@@ -574,10 +574,10 @@ public class SliderChain: Slider {
 
 const float CRAWL_MIN = 2.4f;
 const float CRAWL_MAX = 9.8f;
-const float CRAWL_RETRACT_SPEED = 3f;
+const float CRAWL_RETRACT_SPEED = 0.5f;
 const float CRAWL_GRIND_TIME = 2f;
 const float CRAWL_SLOW_SPEED = 0.5f;
-const float MERGE_BLOCK_MIN_DIST = 2f;
+const float MERGE_BLOCK_MIN_DIST = 1f;
 
 public class CrawlSlider: Slider {
     float LastPos;
@@ -1183,6 +1183,9 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
                 if(type != null) {
                     var i_type = (int)type;
                     var cube_grid = piston.CubeGrid;
+                    if(piston.Top == null) {
+                        throw new Exception("Piston " + piston.CustomName + " is broken!");
+                    }
                     var piston_front = Vector3D.Normalize(piston.Top.GetPosition() - piston.GetPosition());
                     SliderDirection direction;
                     Dictionary<IMyCubeGrid, List<Slider>> per_grid;
@@ -1209,7 +1212,7 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
                     } else {
                         throw new Exception("Burp");
                     }
-                    Echo(type + " " + axis + " " + direction);
+                    // Echo(type + " " + axis + " " + direction);
                     per_grid = type_piston[(int)axis];
                     if(!per_grid.ContainsKey(cube_grid)) {
                         per_grid.Add(cube_grid, new List<Slider>());
@@ -1281,10 +1284,11 @@ public const int RETRACT_X = 3;
 public const int RETRACT_Y = 4;
 public const int RETRACT_Z = 5;
 public const int CENTERING = 6;
-public const float SLOW_Z_SPEED = 0.5f;
+public const float SLOW_Z_SPEED = 0.2f;
 
 public class Miner {
     public Arm Arm;
+    public Vector3D Dst;
     public Vector3I PosI;
     public Vector3I MaxI;
     public IMyShipDrill[] Drills;
@@ -1292,7 +1296,6 @@ public class Miner {
     Program Program;
     int last_move;
     Vector3D Velocity;
-    Vector3D VelocitySlow;
     float Step;
     float DepthStep;
     string Name;
@@ -1308,8 +1311,7 @@ public class Miner {
         this.Arm = program.BuildArmFromName(name, drills[0]);
         this.Drills = drills;
         this.Systems = systems;
-        this.Velocity = new Vector3D(velocity, velocity/2.0, Math.Min(SLOW_Z_SPEED, velocity/2.0));
-        this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, Math.Min(SLOW_Z_SPEED, velocity/2.0));
+        this.Velocity = new Vector3D(velocity, velocity, Math.Min(SLOW_Z_SPEED, velocity/2.0));
         this.Step = step;
         this.DepthStep = depth_step;
         this.last_move = 0;
@@ -1325,6 +1327,8 @@ public class Miner {
         foreach(var drill in this.Drills) {
             MaxVolume += (float)drill.GetInventory().MaxVolume;
         }
+        this.Refresh();
+        this.BuildPosI();
     }
 
     public float CurrentVolume() {
@@ -1362,30 +1366,18 @@ public class Miner {
         }
     }
 
-    public void Refresh() {
-        this.RefreshDamaged();
-        this.Arm.Refresh();
-
+    void BuildPosI() {
         int x;
         int y;
         int z = (int)(this.Arm.Pos.Z / this.DepthStep);
-        if(z < this.PosI.Z) {
-            z = this.PosI.Z;
-        }
 
         bool y_extend = (z % 2 == 0);
         bool x_extend;
         if(y_extend) {
             y = (int)(this.Arm.Pos.Y / this.Step);
-            if(y < this.PosI.Y) {
-                y = this.PosI.Y;
-            }
             x_extend = (y % 2 == 0);
         } else {
             y = (int)((this.Arm.Pos.Y + this.Step - 0.1f) / this.Step);
-            if(y > this.PosI.Y) {
-                y = this.PosI.Y;
-            }
             x_extend = !(y % 2 == 0);
         }
         if(x_extend) {
@@ -1405,6 +1397,18 @@ public class Miner {
         this.PosI.X = x;
         this.PosI.Y = y;
         this.PosI.Z = z;
+        this.RefreshDst();
+    }
+
+    void RefreshDst() {
+        this.Dst.X = Math.Min((float)this.PosI.X * this.Step + 0.1f, this.Arm.Max.X);
+        this.Dst.Y = Math.Min((float)this.PosI.Y * this.Step + 0.1f, this.Arm.Max.Y);
+        this.Dst.Z = Math.Min((float)this.PosI.Z * this.DepthStep + 0.1f, this.Arm.Max.Z);
+    }
+
+    public void Refresh() {
+        this.RefreshDamaged();
+        this.Arm.Refresh();
     }
 
     public int SelectMove() {
@@ -1482,41 +1486,35 @@ public class Miner {
             }
         }
 
-        var move = this.SelectMove();
-        this.last_move = move;
+        if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2) {
+            var move = this.SelectMove();
+            this.last_move = move;
 
-        var dst = new Vector3D(this.Arm.Pos.X, this.Arm.Pos.Y, this.Arm.Pos.Z);
-        var velocity = this.Velocity;
-        switch(move) {
-            case EXTEND_X:
-                dst.X = this.Arm.X.Max;
-                break;
-            case EXTEND_Y:
-                dst.Y = (float)(this.PosI.Y + 1) * this.Step + 0.1f;
-                break;
-            case EXTEND_Z:
-                dst.Z = (float)(this.PosI.Z + 1) * this.DepthStep + 0.1f;
-                break;
-            case RETRACT_X:
-                dst.X = 0.0;
-                break;
-            case RETRACT_Y:
-                dst.Y = (float)(this.PosI.Y - 1) * this.Step - 0.1f;
-                break;
-            case RETRACT_Z:
-                dst.Z = (float)(this.PosI.Z - 1) * this.DepthStep - 0.1f;
-                break;
-            default:
-                break;
-        }
-        if(move == EXTEND_X || move == RETRACT_X) {
-            if(this.PosI.Y == 0 || this.PosI.Y == this.MaxI.Y) {
-                velocity = this.VelocitySlow;
+            switch(move) {
+                case EXTEND_X:
+                    this.PosI.X = this.MaxI.X;
+                    break;
+                case EXTEND_Y:
+                    this.PosI.Y += 1;
+                    break;
+                case EXTEND_Z:
+                    this.PosI.Z += 1;
+                    break;
+                case RETRACT_X:
+                    this.PosI.X = 0;
+                    break;
+                case RETRACT_Y:
+                    this.PosI.Y -= 1;
+                    break;
+                case RETRACT_Z:
+                    this.PosI.Z -= 1;
+                    break;
+                default:
+                    break;
             }
-        } else {
-            velocity = this.VelocitySlow;
+            this.RefreshDst();
         }
-        this.Arm.MoveTo(dst, velocity);
+        this.Arm.MoveTo(this.Dst, this.Velocity);
     }
 
     public void Start() {
