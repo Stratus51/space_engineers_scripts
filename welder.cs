@@ -1,132 +1,999 @@
-public class StraightArm {
-    List<IMyPistonBase> positive;
-    List<IMyPistonBase> negative;
-    public double Max;
-    public double Pos;
-    public StraightArm(List<IMyPistonBase> positive, List<IMyPistonBase> negative) {
-        this.positive = positive;
-        this.negative = negative;
-        this.Max = 0.0;
-        foreach(var piston in this.positive) {
-            piston.Enabled = true;
-            this.Max += piston.HighestPosition;
-        }
-        foreach(var piston in this.negative) {
-            piston.Enabled = true;
-            this.Max += piston.HighestPosition;
-        }
+static string VectorToString(Vector3D v) {
+    return "X=" + v.X.ToString("0.0") + " Y=" + v.Y.ToString("0.0") + " Z=" + v.Z.ToString("0.0");
+}
+
+public enum SliderDirection {
+    Positive,
+    Negative,
+}
+
+public interface Slider {
+    float Pos {get;}
+    float Min {get;}
+    float Max {get;}
+    float Speed {get;}
+
+    string Name();
+    void Refresh();
+    bool Sync();
+    void SetSpeed(float speed);
+    void Reverse();
+    void Start();
+    void Stop();
+    void Run();
+    void MoveTo(float pos, float speed);
+    Vector3D WorldPosition();
+    Vector3D WorldDirection();
+    string StateToString();
+    bool IsStable();
+}
+
+public class ReverseSlider<T>: Slider where T : Slider {
+    public float Pos {get;set;}
+    public float Min {get;}
+    public float Max {get;}
+    public float Speed {get;set;}
+
+    T Slider;
+
+    public ReverseSlider(T slider) {
+        this.Slider = slider;
+        this.Min = this.Slider.Min;
+        this.Max = this.Slider.Max;
     }
 
-    public bool Empty() {
-        return this.positive.Count + this.negative.Count == 0;
+    float ReversedPos(float pos) {
+        return this.Slider.Max - pos + this.Slider.Min;
+    }
+
+    public string Name() {
+        return this.Slider.Name();
     }
 
     public void Refresh() {
-        this.Pos = 0.0;
-        foreach(var piston in this.positive) {
-            this.Pos += piston.CurrentPosition;
-        }
-        foreach(var piston in this.negative) {
-            this.Pos += piston.HighestPosition - piston.CurrentPosition;
-        }
+        this.Slider.Refresh();
+        this.Pos = this.ReversedPos(this.Slider.Pos);
+        this.Speed = -this.Slider.Speed;
     }
 
-    public void Move(double pos, double speed) {
-        var current_pos = this.Pos;
-        List<IMyPistonBase> to_extend;
-        List<IMyPistonBase> to_retract;
-        double needed;
-        if(pos > current_pos) {
-            needed = pos - current_pos;
-            to_extend = this.positive;
-            to_retract = this.negative;
-        } else if(current_pos > pos) {
-            needed = current_pos - pos;
-            to_extend = this.negative;
-            to_retract = this.positive;
-        } else {
-            return;
-        }
+    public bool Sync() {
+        return this.Slider.Sync();
+    }
 
-        foreach(var piston in to_extend) {
-            if(piston.CurrentPosition < piston.HighestPosition) {
-                piston.MaxLimit = (float)Math.Min(piston.HighestPosition, piston.CurrentPosition + needed);
-                piston.Velocity = (float)speed;
-                return;
-            }
-        }
+    public void SetSpeed(float speed) {
+        this.Slider.SetSpeed(-speed);
+        this.Speed = speed;
+    }
 
-        foreach(var piston in to_retract) {
-            if(piston.CurrentPosition > piston.LowestPosition) {
-                piston.MinLimit = (float)Math.Max(piston.LowestPosition, piston.CurrentPosition - needed);
-                piston.Velocity = (float)-speed;
-                return;
-            }
-        }
+    public void Reverse() {
+        this.Slider.Reverse();
+        this.Speed = -this.Speed;
     }
 
     public void Start() {
-        foreach(var piston in this.positive) {
-            piston.Enabled = true;
-        }
-        foreach(var piston in this.negative) {
-            piston.Enabled = true;
-        }
+        this.Slider.Start();
     }
 
     public void Stop() {
-        foreach(var piston in this.positive) {
-            piston.Enabled = false;
+        this.Slider.Stop();
+    }
+
+    public void Run() {
+        this.Slider.Run();
+    }
+
+    public void MoveTo(float pos, float speed) {
+        this.Slider.MoveTo(this.ReversedPos(pos), speed);
+    }
+
+    public Vector3D WorldPosition() {
+        return this.Slider.WorldPosition();
+    }
+
+    public Vector3D WorldDirection() {
+        return -this.Slider.WorldDirection();
+    }
+
+    public string StateToString() {
+        return "[Reversed] " + this.Slider.StateToString();
+    }
+
+    public bool IsStable() {
+        return this.Slider.IsStable();
+    }
+}
+
+public class Piston: Slider {
+    Program Program;
+    public float Pos {get; set;}
+    public float Min {get;}
+    public float Max {get;}
+    public float Speed {get; set;}
+    public IMyPistonBase piston;
+
+    public Piston(Program program, IMyPistonBase piston) {
+        this.Program = program;
+
+        this.Min = 0;
+        this.Max = piston.HighestPosition;
+        // TODO Hack. Tolerances should be detected automatically.
+        this.Max = 9.7f;
+        this.piston = piston;
+        this.Refresh();
+    }
+
+    public string Name() {
+        return this.piston.CustomName;
+    }
+
+    public void Refresh() {
+        this.Pos = this.piston.CurrentPosition;
+        this.Speed = this.piston.Velocity;
+    }
+
+    public bool Sync() {
+        return true;
+    }
+
+    public void SetSpeed(float speed) {
+        // this.Program.Echo("Piston.SetSpeed: " + speed);
+        this.piston.Velocity = speed;
+        this.Speed = speed;
+    }
+
+    public void Reverse() {
+        this.piston.Reverse();
+        this.Speed = -this.Speed;
+    }
+
+    public void Start() {
+        this.piston.Enabled = true;
+    }
+
+    public void Stop() {
+        this.piston.Enabled = false;
+    }
+
+    public void Run() {}
+
+    public void MoveTo(float pos, float speed) {
+        // this.Program.Echo(this.Name() + " Piston[" + this.Pos + "].MoveTo: " + pos + " | " + speed);
+        this.piston.MinLimit = pos;
+        this.piston.MaxLimit = pos;
+
+        if(pos > this.Pos) {
+            this.SetSpeed(speed);
+        } else if(pos < this.Pos) {
+            this.SetSpeed(-speed);
         }
-        foreach(var piston in this.negative) {
-            piston.Enabled = false;
+    }
+
+    public Vector3D WorldPosition() {
+        return piston.CubeGrid.GridIntegerToWorld(piston.Position);
+    }
+
+    public Vector3D WorldDirection() {
+        return this.piston.WorldMatrix.Up;
+    }
+
+    public string StateToString() {
+        if(this.piston.Enabled) {
+            if(this.Speed > 0.0f) {
+                return "Expand";
+            } else if(this.Speed < 0.0f) {
+                return "Retract";
+            } else {
+                return "Immobile";
+            }
+        } else {
+            return "Stopped";
+        }
+    }
+
+    public bool IsStable() {
+        return true;
+    }
+}
+
+public class Connectors {
+    public IMyShipConnector[] List;
+    public Connectors(IMyShipConnector[] connectors) {
+        this.List = connectors;
+    }
+
+    public void Connect() {
+        foreach(var connector in this.List) {
+            connector.Connect();
+        }
+    }
+
+    public void Disconnect() {
+        foreach(var connector in this.List) {
+            connector.Disconnect();
+        }
+    }
+
+    public MyShipConnectorStatus Status() {
+        var status = MyShipConnectorStatus.Connected;
+        foreach(var connector in this.List) {
+            switch(status) {
+                case MyShipConnectorStatus.Connected:
+                    if(connector.Status != MyShipConnectorStatus.Connected) {
+                        status = connector.Status;
+                    }
+                    break;
+                case MyShipConnectorStatus.Connectable:
+                    if(connector.Status == MyShipConnectorStatus.Unconnected) {
+                        status = connector.Status;
+                    }
+                    break;
+                case MyShipConnectorStatus.Unconnected:
+                    break;
+                default:
+                    break;
+            }
+            if(status == MyShipConnectorStatus.Unconnected) {
+                break;
+            }
+        }
+        return status;
+    }
+}
+
+public class MergeBlocks {
+    public IMyShipMergeBlock[] List;
+    public bool Enabled;
+
+    public MergeBlocks(IMyShipMergeBlock[] connectors) {
+        this.List = connectors;
+    }
+
+    public bool IsEnabled() {
+        foreach(var mblock in this.List) {
+            if(!mblock.Enabled) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public bool IsDisabled() {
+        foreach(var mblock in this.List) {
+            if(mblock.Enabled) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public bool IsConnected() {
+        foreach(var mblock in this.List) {
+            if(!mblock.IsConnected) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public void SetEnabled(bool enabled) {
+        foreach(var mblock in this.List) {
+            mblock.Enabled = enabled;
         }
     }
 }
 
-public class Arm {
-    public StraightArm X;
-    public StraightArm Y;
-    public StraightArm Z;
-    public Vector3D Pos;
-    public Vector3D Max;
-    public Vector3D Dst;
+public class Sliders: Slider {
+    Program Program;
+    public float Pos {get; set;}
+    public float Min {get;}
+    public float Max {get;}
+    public float Speed {get; set;}
+    public List<Slider> List;
+    bool Enabled;
 
-    public Arm(Program program, string name) {
-        var x_pos = new List<IMyPistonBase>();
-        var x_neg = new List<IMyPistonBase>();
-        var y_pos = new List<IMyPistonBase>();
-        var y_neg = new List<IMyPistonBase>();
-        var z_pos = new List<IMyPistonBase>();
-        var z_neg = new List<IMyPistonBase>();
+    public Sliders(Program program, List<Slider> sliders) {
+        this.Program = program;
+        this.List = sliders;
+        this.Min = 0;
+        this.Max = (float)sliders[0].Max;
 
-        var list = new List<IMyPistonBase>();
-        program.GridTerminalSystem.GetBlocksOfType<IMyPistonBase>(list);
-        foreach(var piston in list) {
-            if(piston.CustomName == name + " X+") {
-                x_pos.Add(piston);
-            } else if(piston.CustomName == name + " X-") {
-                x_neg.Add(piston);
-            } else if(piston.CustomName == name + " Y+") {
-                y_pos.Add(piston);
-            } else if(piston.CustomName == name + " Y-") {
-                y_neg.Add(piston);
-            } else if(piston.CustomName == name + " Z+") {
-                z_pos.Add(piston);
-            } else if(piston.CustomName == name + " Z-") {
-                z_neg.Add(piston);
+        var size = sliders[0].Max;
+        foreach(var slider in sliders) {
+            if(slider.Max != size) {
+                throw new Exception("Grouped sliders of different size (" + slider.Max + " != " + size + ")!");
             }
         }
 
-        this.X = new StraightArm(x_pos, x_neg);
-        this.Y = new StraightArm(y_pos, y_neg);
-        this.Z = new StraightArm(z_pos, z_neg);
+        this.Refresh();
+    }
+
+    public string Name() {
+        return this.List[0].Name();
+    }
+
+    public void Refresh() {
+        this.List[0].Refresh();
+        var pos = this.List[0].Pos;
+        foreach(var slider in this.List) {
+            slider.Refresh();
+            if(slider.Pos > pos) {
+                pos = slider.Pos;
+            }
+        }
+        this.Pos = pos;
+    }
+
+    public bool Sync() {
+        var ref_pos = this.List[0].Pos;
+        var is_synced = true;
+        foreach(var slider in this.List) {
+            if(slider.Sync()) {
+                if(Math.Abs(slider.Pos - ref_pos) > 0.1) {
+                    is_synced = false;
+                    slider.MoveTo(ref_pos, 0.5f);
+                }
+            }
+        }
+        return is_synced;
+    }
+
+    public void SetSpeed(float speed) {
+        foreach(var slider in this.List) {
+            slider.SetSpeed(speed);
+        }
+        this.Speed = speed;
+    }
+
+    public void Reverse() {
+        foreach(var slider in this.List) {
+            slider.Reverse();
+        }
+        this.Speed = -this.Speed;
+    }
+
+    public void Start() {
+        foreach(var slider in this.List) {
+            slider.Start();
+        }
+        this.Enabled = true;
+    }
+
+    public void Stop() {
+        foreach(var slider in this.List) {
+            slider.Stop();
+        }
+        this.Enabled = false;
+    }
+
+    public void Run() {
+        foreach(var slider in this.List) {
+            slider.Run();
+        }
+    }
+
+    public void MoveTo(float pos, float speed) {
+        // this.Echo("MoveTo[" + this.List.Count + "](" + pos + ", " + speed + ")");
+        foreach(var slider in this.List) {
+            slider.MoveTo(pos, speed);
+        }
+        this.Speed = this.List[0].Speed;
+    }
+
+    public Vector3D WorldPosition() {
+        return this.List[0].WorldPosition();
+    }
+
+    public Vector3D WorldDirection() {
+        return this.List[0].WorldDirection();
+    }
+
+    public string StateToString() {
+        var state = this.List[0].StateToString();
+        if(this.Enabled) {
+            if(this.Speed > 0.0f) {
+                return "Expand " + state;
+            } else if(this.Speed < 0.0f) {
+                return "Retract " + state;
+            } else {
+                return "Immobile " + state;
+            }
+        } else {
+            return "Stopped " + state;
+        }
+    }
+
+    void Echo(string s) {
+        this.Program.Echo("Sliders: " + s);
+    }
+
+    public bool IsStable() {
+        foreach(var slider in this.List) {
+            if(!slider.IsStable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+public class SliderChain: Slider {
+    Program Program;
+    List<Slider> List;
+
+    public float Pos {get; set;}
+    public float Min {get;}
+    public float Max {get;}
+    public float Speed {get; set;}
+    bool Enabled;
+    Slider Last;
+
+    public SliderChain(Program program, List<Slider> sliders) {
+        this.Program = program;
+        this.List = sliders;
+        this.Min = 0.0f;
+        this.Max = 0.0f;
+        foreach(var slider in sliders) {
+            this.Max += slider.Max;
+        }
+        this.Refresh();
+    }
+
+    public string Name() {
+        return this.List[0].Name();
+    }
+
+    public bool Empty() {
+        return this.List.Count == 0;
+    }
+
+    public void Refresh() {
+        this.Pos = 0.0f;
+        foreach(var slider in this.List) {
+            slider.Refresh();
+            this.Pos += slider.Pos;
+        }
+    }
+
+    public void MoveTo(float pos, float speed) {
+        var current_pos = this.Pos;
+        float needed;
+        if(pos > current_pos) {
+            needed = pos - current_pos;
+            this.Speed = speed;
+            foreach(var slider in this.List) {
+                if(slider.Pos < slider.Max) {
+                    var goal = (float)Math.Min(slider.Max, slider.Pos + needed);
+                    slider.MoveTo(goal, speed);
+                    this.Last = slider;
+                    return;
+                }
+            }
+        } else if(current_pos > pos) {
+            needed = current_pos - pos;
+            this.Speed = -speed;
+            foreach(var slider in this.List) {
+                if(slider.Pos > slider.Min) {
+                    var goal = (float)Math.Max(slider.Min, slider.Pos - needed);
+                    slider.MoveTo(goal, speed);
+                    this.Last = slider;
+                    return;
+                }
+            }
+        } else {
+            return;
+        }
+    }
+
+    public bool Sync() {
+        var synced = true;
+        foreach(var slider in this.List) {
+            synced = synced && slider.Sync();
+        }
+        return synced;
+    }
+
+    public void Reverse() {
+        this.SetSpeed(-this.Speed);
+    }
+
+    public void Start() {
+        this.Enabled = true;
+        foreach(var slider in this.List) {
+            slider.Start();
+        }
+    }
+
+    public void Stop() {
+        this.Enabled = false;
+        foreach(var slider in this.List) {
+            slider.Stop();
+        }
+    }
+
+    public void SetSpeed(float speed) {
+        foreach(var slider in this.List) {
+            if(slider.Pos < slider.Max) {
+                slider.SetSpeed(speed);
+                return;
+            }
+        }
+    }
+
+    public void Run() {
+        foreach(var slider in this.List) {
+            slider.Run();
+        }
+    }
+
+    public Vector3D WorldPosition() {
+        if(this.List.Count > 0) {
+            return this.List[0].WorldPosition();
+        } else {
+            return new Vector3D(0, 0, 0);
+        }
+    }
+
+    public Vector3D WorldDirection() {
+        if(this.List.Count > 0) {
+            return this.List[0].WorldDirection();
+        } else {
+            return new Vector3D(0, 0, 0);
+        }
+    }
+
+    public string StateToString() {
+        var last_state = "";
+        if(this.Last != null) {
+            last_state = this.Last.StateToString();
+        }
+        if(this.Enabled) {
+            if(this.Speed > 0.0f) {
+                return "Expand " + last_state;
+            } else if(this.Speed < 0.0f) {
+                return "Retract " + last_state;
+            } else {
+                return "Immobile " + last_state;
+            }
+        } else {
+            return "Stopped " + last_state;
+        }
+    }
+
+    void Echo(string s) {
+        this.Program.Echo("SliderChain: " + s);
+    }
+
+    public bool IsStable() {
+        foreach(var slider in this.List) {
+            if(!slider.IsStable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+const float CRAWL_MIN = 2.4f;
+const float CRAWL_MAX = 9.8f;
+const float CRAWL_RETRACT_SPEED = 0.5f;
+const float CRAWL_GRIND_TIME = 2f;
+const float CRAWL_SLOW_SPEED = 0.5f;
+const float MERGE_BLOCK_MIN_DIST = 1.5f;
+
+public class CrawlSlider: Slider {
+    float LastPos;
+    public float Pos {get;set;}
+    public float Min {get;}
+    public float Max {get;}
+
+    Program Program;
+    string name;
+    IMyCubeBlock Origin;
+    Slider Slider;
+    Connectors[] Connectors;
+    MergeBlocks[] MergeBlocks;
+    public float Speed {get; set;}
+    bool Enabled;
+
+    TimeSpan RemainingGrind;
+
+    enum State {
+        TranslatingLoad,
+        MergeTopSlideUp,
+        MergeTopSlideDown,
+        BigSyncTopConnector,
+        BigLockingTopConnector,
+        UnlockingBottom,
+        TranslatingSlider,
+        Grind,
+        MergeBottomSlideDown,
+        MergeBottomSlideUp,
+        LockingBottomConnector,
+        RewindTopConnector,
+        SmallSyncTopConnector,
+        SmallLockingTopConnector,
+        UnlockingBottomMergeBlock,
+        RewindLoad,
+    }
+    State state;
+
+    public CrawlSlider(Program program, string name, IMyCubeBlock origin, Slider slider, Connectors[] connectors, MergeBlocks[] merge_blocks) {
+        this.Program = program;
+        this.name = name;
+        this.Origin = origin;
+        this.Slider = slider;
+        this.Connectors = connectors;
+        this.MergeBlocks = merge_blocks;
+
+        this.Pos = (float)Vector3D.Dot(this.Connectors[1].List[0].GetPosition() - this.Origin.GetPosition(), this.WorldDirection());
+        this.LastPos = this.Pos;
+
+        this.state = this.DetectState();
+        this.Refresh();
+        this.Min = 0;
+        this.Max = 50000;
+    }
+
+    State DetectState() {
+        if(this.MergeBlocks[0].IsConnected()) {
+            return State.TranslatingLoad;
+        } else if(this.MergeBlocks[1].IsConnected()) {
+            return State.TranslatingSlider;
+        } else {
+            throw new Exception("Unknown crawl slider state.");
+        }
+    }
+
+    public string Name() {
+        return this.name;
+    }
+
+    public void Refresh() {
+        this.Slider.Refresh();
+        switch(this.state) {
+            case State.TranslatingLoad:
+                this.Pos = (float)Vector3D.Dot(this.Connectors[1].List[0].GetPosition() - this.Origin.GetPosition(), this.WorldDirection());
+                this.LastPos = this.Pos;
+                break;
+            default:
+                // Make the exterior think we are immobile while transitionning.
+                this.Pos = this.LastPos;
+                break;
+        }
+    }
+
+    public bool Sync() {
+        return this.Slider.Sync();
+    }
+
+    public void SetSpeed(float speed) {
+        if(speed > 0) {
+            this.MoveTo(this.Max, speed);
+        } else {
+            this.MoveTo(this.Min, -speed);
+        }
+        this.Speed = speed;
+    }
+
+    public void Reverse() {
+        this.SetSpeed(-this.Speed);
+    }
+
+    public void Start() {
+        this.Slider.Start();
+        this.Enabled = true;
+    }
+
+    public void Stop() {
+        this.Slider.Stop();
+        this.Enabled = false;
+    }
+
+    public void Run() {
+    }
+
+    public void MoveTo(float pos, float speed) {
+        var slider_target = Math.Min(10f, pos - this.Pos + this.Slider.Pos);
+        Echo("MoveTo: " + this.Pos + " => " + pos);
+        Echo("Target " + slider_target);
+        if(pos >= this.Pos) {
+            Echo("State: " + this.state);
+            this.Speed = speed;
+            switch(this.state) {
+                case State.TranslatingLoad:
+                    if(this.Slider.Pos >= CRAWL_MAX) {
+                        this.state = State.MergeTopSlideUp;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(false);
+                        this.Slider.MoveTo(slider_target, speed);
+                    }
+                    break;
+                case State.MergeTopSlideUp:
+                    if(this.MergeBlocks[1].IsConnected()) {
+                        this.state = State.BigSyncTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        var target = CRAWL_MAX - MERGE_BLOCK_MIN_DIST;
+                        if(this.Slider.Pos > target) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Connect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(target - 0.05f, speed);
+                        } else {
+                            this.state = State.MergeTopSlideDown;
+                            this.MoveTo(pos, CRAWL_SLOW_SPEED);
+                        }
+                    }
+                    break;
+                case State.MergeTopSlideDown:
+                    if(this.MergeBlocks[1].IsConnected()) {
+                        this.state = State.BigSyncTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        if(this.Slider.Pos < CRAWL_MAX) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Connect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(CRAWL_MAX + 0.05f, speed);
+                        } else {
+                            this.state = State.MergeTopSlideUp;
+                            this.MoveTo(pos, CRAWL_SLOW_SPEED);
+                        }
+                    }
+                    break;
+                case State.BigSyncTopConnector:
+                    if(this.Slider.Pos >= CRAWL_MAX) {
+                        if(!this.Sync()) {
+                            break;
+                        }
+                        this.state = State.BigLockingTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Disconnect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.Slider.MoveTo(CRAWL_MAX, CRAWL_SLOW_SPEED);
+                    }
+                    break;
+                case State.BigLockingTopConnector:
+                    if(this.Connectors[1].Status() == MyShipConnectorStatus.Connected) {
+                        this.state = State.UnlockingBottom;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+                    }
+                    break;
+                case State.UnlockingBottom:
+                    if(this.Connectors[0].Status() != MyShipConnectorStatus.Connected && this.MergeBlocks[0].IsDisabled()) {
+                        this.state = State.TranslatingSlider;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(false);
+                        this.Connectors[0].Disconnect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+                    }
+                    break;
+                case State.TranslatingSlider:
+                    if(this.Slider.Pos <= CRAWL_MIN) {
+                        this.state = State.Grind;
+                        this.RemainingGrind = new TimeSpan(0, 0, 2);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(false);
+                        this.Connectors[0].Disconnect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.Slider.MoveTo(CRAWL_MIN - 0.1f, CRAWL_RETRACT_SPEED);
+                    }
+                    break;
+                case State.Grind:
+                    this.RemainingGrind -= this.Program.Runtime.TimeSinceLastRun;
+                    if(this.RemainingGrind < TimeSpan.Zero) {
+                        this.MergeBlocks[0].SetEnabled(false);
+                        this.Connectors[0].Disconnect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.state = State.MergeBottomSlideDown;
+                        this.MoveTo(pos, speed);
+                    }
+                    break;
+                case State.MergeBottomSlideDown:
+                    if(this.MergeBlocks[0].IsConnected()) {
+                        this.state = State.LockingBottomConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        var target = CRAWL_MIN + MERGE_BLOCK_MIN_DIST;
+                        if(this.Slider.Pos < target) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Disconnect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(target + 0.05f, CRAWL_SLOW_SPEED);
+                        } else {
+                            this.state = State.MergeBottomSlideUp;
+                            this.MoveTo(pos, speed);
+                        }
+                    }
+                    break;
+                case State.MergeBottomSlideUp:
+                    if(this.MergeBlocks[0].IsConnected()) {
+                        this.state = State.LockingBottomConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        var target = CRAWL_MIN;
+                        if(this.Slider.Pos > target) {
+                            this.MergeBlocks[0].SetEnabled(true);
+                            this.Connectors[0].Disconnect();
+                            this.Connectors[1].Connect();
+                            this.MergeBlocks[1].SetEnabled(true);
+
+                            this.Slider.MoveTo(target - 0.05f, CRAWL_SLOW_SPEED);
+                        } else {
+                            this.state = State.MergeBottomSlideDown;
+                            this.MoveTo(pos, speed);
+                        }
+                    }
+                    break;
+                case State.LockingBottomConnector:
+                    if(this.Connectors[1].Status() == MyShipConnectorStatus.Connected) {
+                        this.state = State.RewindTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+                    }
+                    break;
+                case State.RewindTopConnector:
+                    if(this.Slider.Pos < CRAWL_MIN - 1f) {
+                        if(!this.Sync()) {
+                            break;
+                        }
+                        this.state = State.SmallSyncTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Disconnect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.Slider.MoveTo(CRAWL_MIN - 1.1f, CRAWL_SLOW_SPEED);
+                    }
+                    break;
+                case State.SmallSyncTopConnector:
+                    if(this.Slider.Pos >= CRAWL_MIN) {
+                        if(!this.Sync()) {
+                            break;
+                        }
+                        this.state = State.SmallLockingTopConnector;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Disconnect();
+                        this.MergeBlocks[1].SetEnabled(true);
+
+                        this.Slider.MoveTo(CRAWL_MIN, CRAWL_SLOW_SPEED);
+                    }
+                    break;
+                case State.SmallLockingTopConnector:
+                    if(this.Connectors[1].Status() == MyShipConnectorStatus.Connected) {
+                        this.state = State.UnlockingBottomMergeBlock;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(true);
+                    }
+                    break;
+                case State.UnlockingBottomMergeBlock:
+                    if(this.MergeBlocks[1].IsDisabled()) {
+                        this.state = State.RewindLoad;
+                        this.MoveTo(pos, speed);
+                    } else {
+                        this.Slider.MoveTo(CRAWL_MIN, speed);
+
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(false);
+                    }
+                    break;
+                case State.RewindLoad:
+                    if(this.Slider.Pos <= CRAWL_MIN - 0.1f) {
+                        this.state = State.TranslatingLoad;
+                    } else {
+                        this.MergeBlocks[0].SetEnabled(true);
+                        this.Connectors[0].Connect();
+                        this.Connectors[1].Connect();
+                        this.MergeBlocks[1].SetEnabled(false);
+
+                        this.Slider.MoveTo(CRAWL_MIN - 0.1f, CRAWL_SLOW_SPEED);
+                    }
+                    break;
+            }
+        } else {
+            // TODO
+            switch(this.state) {
+                case State.TranslatingLoad:
+                    this.Slider.MoveTo(slider_target, speed);
+                    break;
+                default:
+                    Echo("Ignoring negative speeds in state " + this.state);
+                    break;
+            }
+            // throw new Exception("Negative speed not implemented (crawl slider)");
+        }
+    }
+
+    public Vector3D WorldPosition() {
+        return this.Origin.GetPosition();
+    }
+
+    public Vector3D WorldDirection() {
+        return this.Slider.WorldDirection();
+    }
+
+    public string StateToString() {
+        if(this.Enabled) {
+            if(this.Speed > 0.0f) {
+                return "Expand: " + this.state;
+            } else if(this.Speed < 0.0f) {
+                return "Retract: " + this.state;
+            } else {
+                return "Immobile: " + this.state;
+            }
+        } else {
+            return "Stopped: " + this.state;
+        }
+    }
+
+    void Echo(string s) {
+        this.Program.Echo("Crawl: " + s);
+    }
+
+    public bool IsStable() {
+        return this.state == State.TranslatingLoad;
+    }
+}
+
+public class Arm {
+    Program Program;
+    public Slider X;
+    public Slider Y;
+    public Slider Z;
+    public Vector3D Pos;
+    public Vector3D Max;
+
+    public Arm(Program program, Slider x, Slider y, Slider z) {
+        this.Program = program;
+        this.X = x;
+        this.Y = y;
+        this.Z = z;
         this.Pos = new Vector3D(0.0, 0.0, 0.0);
         this.Max = new Vector3D(this.X.Max, this.Y.Max, this.Z.Max);
     }
 
     public bool Empty() {
-        return this.X.Empty() && this.Y.Empty() && this.Z.Empty();
+        return this.X.Max + this.Y.Max + this.Z.Max == 0;
     }
 
     public void Refresh() {
@@ -138,11 +1005,12 @@ public class Arm {
         this.Pos.Z = this.Z.Pos;
     }
 
-    public void Move(Vector3D pos, Vector3D speed) {
-        this.X.Move(pos.X, speed.X);
-        this.Y.Move(pos.Y, speed.Y);
-        this.Z.Move(pos.Z, speed.Z);
-        this.Dst = pos;
+    public void MoveTo(Vector3D pos, Vector3D speed) {
+        Echo("MoveTo:  " + VectorToString(this.Pos));
+        Echo("      => " + VectorToString(pos));
+        this.X.MoveTo((float)pos.X, (float)speed.X);
+        this.Y.MoveTo((float)pos.Y, (float)speed.Y);
+        this.Z.MoveTo((float)pos.Z, (float)speed.Z);
     }
 
     public void Start() {
@@ -156,531 +1024,712 @@ public class Arm {
         this.Y.Stop();
         this.Z.Stop();
     }
+
+    public void Echo(string s) {
+        this.Program.Echo("Arm: " + s);
+    }
+
+    public bool IsStable() {
+        return this.X.IsStable() && this.Y.IsStable() && this.Z.IsStable();
+    }
 }
 
-public class Welder {
-    public Program Program;
-    public Arm Arm;
-    public IMyShipWelder welder;
-    public double BlockSize;
+enum SliderType {
+    Direct,
+    Crawl,
+}
 
-    public Welder(Program program, string name, IMyShipWelder welder) {
-        this.Program = program;
-        this.Arm = new Arm(program, name);
-        this.welder = welder;
-        this.BlockSize = this.welder.CubeGrid.GridSize;
+Nullable<SliderType> SliderTypeFromName(string name) {
+    if(name.StartsWith("Direct")) {
+        return SliderType.Direct;
+    } else if(name.StartsWith("Crawl")) {
+        return SliderType.Crawl;
+    } else {
+        return SliderType.Direct;
+    }
+}
+
+enum Axis {
+    X,
+    Y,
+    Z
+
+}
+public List<Slider> BuildCrawlSliders(string root_name, Dictionary<IMyCubeGrid, List<Slider>> sliders_dict, List<IMyShipConnector> all_connectors, List<IMyShipMergeBlock> all_merge_blocks) {
+    string base_name = root_name + " Crawl";
+    var names = new HashSet<string>();
+    var all_sliders = new List<Slider>();
+    foreach(var entry in sliders_dict) {
+        foreach(var slider in entry.Value) {
+            var sub_name = slider.Name().Substring(base_name.Length);
+            names.Add(sub_name);
+            all_sliders.Add(slider);
+        }
     }
 
-    public void Refresh() {
-        this.Arm.Refresh();
-    }
+    var ret = new List<Slider>();
+    foreach(var name in names) {
+        var sliders = new List<Slider>();
+        var connectors = new List<IMyShipConnector>[2];
+        var merge_blocks = new List<IMyShipMergeBlock>[2];
+        for(var i = 0; i < 2; i++) {
+            connectors[i] = new List<IMyShipConnector>();
+            merge_blocks[i] = new List<IMyShipMergeBlock>();
+        }
 
-    double Distance2DSq(Vector3D pos) {
-        var dx = this.Arm.Pos.X - pos.X;
-        var dy = this.Arm.Pos.Y - pos.Y;
-        return dx * dx + dy * dy;
-    }
-
-    void Echo(string s) {
-        this.Program.Echo(s);
-    }
-
-    public void Weld(Vector3D pos, Vector3D speed, Vector3D transport_speed) {
-        var in_reach = false;
-        var h_dist = this.Distance2DSq(pos);
-        Echo("h_dist " + h_dist);
-        if(h_dist > 0.1) {
-            var transport_height = 0.0;
-            // if(h_dist < 1.1) {
-            //     transport_height = pos.Z;
-            // }
-            if(this.Arm.Pos.Z > transport_height) {
-                this.Arm.Move(new Vector3D(this.Arm.Pos.X, this.Arm.Pos.Y, 0.0), transport_speed);
-            } else {
-                this.Arm.Move(new Vector3D(pos.X, pos.Y, 0.0), transport_speed);
+        foreach(var slider in all_sliders) {
+            var sub_name = slider.Name().Substring(base_name.Length);
+            if(sub_name == name) {
+                sliders.Add(slider);
             }
-        } else if (pos.Z - this.Arm.Pos.Z > 2.0) {
-            this.Arm.Move(pos, transport_speed);
-        } else if(pos.Z - this.Arm.Pos.Z > 0.1) {
-            this.Arm.Move(pos, speed);
-        } else {
-            in_reach = true;
         }
 
-        if(in_reach) {
-            this.welder.Enabled = true;
+        foreach(var connector in all_connectors) {
+            var sub_name = connector.CustomName.Substring(base_name.Length);
+            if(sub_name.StartsWith(name + " Bottom")) {
+                connectors[0].Add(connector);
+            } else if(sub_name.StartsWith(name + " Top")) {
+                connectors[1].Add(connector);
+            }
+        }
+
+        foreach(var merge_block in all_merge_blocks) {
+            var sub_name = merge_block.CustomName.Substring(base_name.Length);
+            if(sub_name.StartsWith(name + " Bottom")) {
+                merge_blocks[0].Add(merge_block);
+            } else if(sub_name.StartsWith(name + " Top")) {
+                merge_blocks[1].Add(merge_block);
+            }
+        }
+
+        var origin = this.GridTerminalSystem.GetBlockWithName(root_name + " Crawl Origin");
+        if(sliders.Count > 0 && connectors[0].Count > 0 && connectors[1].Count > 0 && merge_blocks[0].Count > 0 && merge_blocks[1].Count > 0 && origin != null) {
+            var slider = new Sliders(this, sliders);
+            var built_connectors = new Connectors[2];
+            var built_merge_blocks = new MergeBlocks[2];
+            for(var i = 0; i < 2; i++) {
+                built_connectors[i] = new Connectors(connectors[i].ToArray());
+                built_merge_blocks[i] = new MergeBlocks(merge_blocks[i].ToArray());
+            }
+            Echo("Found crawl slider " + sliders.Count + " | "  + connectors[0].Count + " " + connectors[1].Count + " | " + merge_blocks[0].Count + " " + merge_blocks[1].Count);
+            ret.Add(new CrawlSlider(this, root_name, origin, slider, built_connectors, built_merge_blocks));
         } else {
-            this.welder.Enabled = false;
+            Echo("Dropped crawl slider " + name);
+            if(sliders.Count == 0) {
+                Echo("Missing sliders");
+            }
+            if(connectors[0].Count == 0) {
+                Echo("Missing bottom connectors");
+            }
+            if(connectors[1].Count == 0) {
+                Echo("Missing top connectors");
+            }
+            if(merge_blocks[0].Count == 0) {
+                Echo("Missing bottom merge blocks");
+            }
+            if(merge_blocks[1].Count == 0) {
+                Echo("Missing top merge blocks");
+            }
+            if(origin == null) {
+                Echo("Missing origin block");
+            }
         }
     }
+    return ret;
 }
 
-public Welder GetWelder(string name) {
-    var list = new List<IMyShipWelder>();
-    GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(list);
-    foreach(var welder in list) {
-        if(welder.CustomName == name) {
-            return new Welder(this, name, welder);
+public List<Slider> BuildDirectPistons(Dictionary<IMyCubeGrid, List<Slider>> pistons) {
+    var ret = new List<Slider>();
+    foreach(var kv in pistons) {
+        if(kv.Value.Count == 0) {
+            ret.Add(kv.Value[0]);
+        } else {
+            var sliders = new Sliders(this, kv.Value);
+            ret.Add(sliders);
         }
     }
-    Echo("Could not find welder of " + name);
-    return null;
+    return ret;
+}
+
+public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
+    var pistons = new Dictionary<IMyCubeGrid, List<Slider>>[2][];
+    for(var i = 0; i < 2; i++) {
+        var plist = new Dictionary<IMyCubeGrid, List<Slider>>[3];
+        for(var j = 0; j < 3; j++) {
+            plist[j] = new Dictionary<IMyCubeGrid, List<Slider>>();
+        }
+        pistons[i] = plist;
+    }
+
+    var top_w_matrix = top_block.CubeGrid.WorldMatrix;
+    var z_axis = top_w_matrix.GetDirectionVector(top_block.Orientation.Forward);
+    var y_axis = top_w_matrix.GetDirectionVector(top_block.Orientation.Up);
+    var x_axis = top_w_matrix.GetDirectionVector(top_block.Orientation.Left);
+
+    Echo("Scanning pistons");
+    {
+        var list = new List<IMyPistonBase>();
+        this.GridTerminalSystem.GetBlocksOfType<IMyPistonBase>(list);
+        foreach(var piston in list) {
+            if(piston.CustomName.StartsWith(name)) {
+                var name_spec = "";
+                if(piston.CustomName.Length > name.Length) {
+                    name_spec = piston.CustomName.Substring(name.Length + 1);
+                }
+
+                var type = SliderTypeFromName(name_spec);
+                if(type != null) {
+                    var i_type = (int)type;
+                    var cube_grid = piston.CubeGrid;
+                    if(piston.Top == null) {
+                        throw new Exception("Piston " + piston.CustomName + " is broken!");
+                    }
+                    var piston_front = Vector3D.Normalize(piston.Top.GetPosition() - piston.GetPosition());
+                    SliderDirection direction;
+                    Dictionary<IMyCubeGrid, List<Slider>> per_grid;
+                    var type_piston = pistons[i_type];
+                    Axis axis;
+                    if(Vector3D.Dot(z_axis, piston_front) > 0.9) {
+                        axis = Axis.Z;
+                        direction = SliderDirection.Positive;
+                    } else if(Vector3D.Dot(z_axis, piston_front) < -0.9) {
+                        axis = Axis.Z;
+                        direction = SliderDirection.Negative;
+                    } else if(Vector3D.Dot(y_axis, piston_front) > 0.9) {
+                        axis = Axis.Y;
+                        direction = SliderDirection.Positive;
+                    } else if(Vector3D.Dot(y_axis, piston_front) < -0.9) {
+                        axis = Axis.Y;
+                        direction = SliderDirection.Negative;
+                    } else if(Vector3D.Dot(x_axis, piston_front) > 0.9) {
+                        axis = Axis.X;
+                        direction = SliderDirection.Positive;
+                    } else if(Vector3D.Dot(x_axis, piston_front) < -0.9) {
+                        axis = Axis.X;
+                        direction = SliderDirection.Negative;
+                    } else {
+                        throw new Exception("Burp");
+                    }
+                    // Echo(type + " " + axis + " " + direction);
+                    per_grid = type_piston[(int)axis];
+                    if(!per_grid.ContainsKey(cube_grid)) {
+                        per_grid.Add(cube_grid, new List<Slider>());
+                    }
+                    if(direction == SliderDirection.Positive) {
+                        var slider = new Piston(this, piston);
+                        per_grid[cube_grid].Insert(0, slider);
+                    } else {
+                        var slider = new ReverseSlider<Piston>(new Piston(this, piston));
+                        per_grid[cube_grid].Add(slider);
+                    }
+                }
+            }
+        }
+    }
+
+    Echo("Scanning connectors");
+    var all_connectors = new List<IMyShipConnector>();
+    {
+        var list = new List<IMyShipConnector>();
+        this.GridTerminalSystem.GetBlocksOfType<IMyShipConnector>(list);
+        foreach(var connector in list) {
+            if(connector.CustomName.StartsWith(name)) {
+                all_connectors.Add(connector);
+            }
+        }
+    }
+
+    Echo("Scanning merge blocks");
+    var all_merge_blocks = new List<IMyShipMergeBlock>();
+    {
+        var list = new List<IMyShipMergeBlock>();
+        this.GridTerminalSystem.GetBlocksOfType<IMyShipMergeBlock>(list);
+        foreach(var mb in list) {
+            if(mb.CustomName.StartsWith(name)) {
+                all_merge_blocks.Add(mb);
+            }
+        }
+    }
+
+    Echo("Building complex sliders");
+    var sliders = new List<Slider>[3];
+    for(var i = 0; i < 3; i++) {
+        Echo("Axis " + (Axis)i);
+        sliders[i] = new List<Slider>();
+        var direct_sliders = BuildDirectPistons(pistons[(int)SliderType.Direct][i]);
+        Echo(direct_sliders.Count + " direct sliders segments");
+        sliders[i].AddRange(direct_sliders);
+        var crawl_sliders = BuildCrawlSliders(name, pistons[(int)SliderType.Crawl][i], all_connectors, all_merge_blocks);
+        Echo(crawl_sliders.Count + " crawl sliders segments");
+        // TODO: This is a hack. We should check is the sliders are related by either their bottom or top part (each of them could be in a different state).
+        if(crawl_sliders.Count > 0) {
+            var parallel_crawl_sliders = new Sliders(this, crawl_sliders);
+            sliders[i].Add(parallel_crawl_sliders);
+        }
+    }
+
+    var arm_x = new SliderChain(this, sliders[(int)Axis.X]);
+    var arm_y = new SliderChain(this, sliders[(int)Axis.Y]);
+    var arm_z = new SliderChain(this, sliders[(int)Axis.Z]);
+
+    return new Arm(this, arm_x, arm_y, arm_z);
 }
 
 public const int EXTEND_X = 0;
 public const int EXTEND_Y = 1;
+public const int EXTEND_Z = 2;
 public const int RETRACT_X = 3;
 public const int RETRACT_Y = 4;
-public const int PARKING = 5;
+public const int RETRACT_Z = 5;
+public const int CENTERING = 6;
 
-public class DepthSensors {
-    public Program Program;
-    public IMySensorBlock XPos;
-    public IMySensorBlock XNeg;
-    public IMySensorBlock YPos;
-    public IMySensorBlock YNeg;
-    public float SensorToWelderDist;
-    public float CubeSize;
+public class WeldingPrinter {
+    public Arm Arm;
+    public Vector3D Dst;
+    public Vector3I PosI;
+    public Vector3I MaxI;
+    public List<IMyShipWelder> Welders;
+    Program Program;
+    int last_move;
+    Vector3D CurrentVelocity;
+    Vector3D Velocity;
+    Vector3D VelocitySlow;
+    float Step;
+    float DepthStep;
+    string Name;
+    double StartFill;
+    double StopFill;
+    MyItemType[] ComponentTypeList;
+    bool Welding;
+    public List<MyItemType> MissingItems;
+    InventoryState WeldingState;
+    public bool Damaged;
 
-    List<IMySensorBlock> sensors;
+    enum InventoryState {
+        Stop,
+        Continue,
+        Start,
+    }
 
-    public DepthSensors(Program program, IMySensorBlock XPos, IMySensorBlock XNeg, IMySensorBlock YPos, IMySensorBlock YNeg) {
+    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, float velocity, float step, float depth_step, double start_fill, double stop_fill, MyItemType[] component_type_list) {
         this.Program = program;
-        this.XPos = XPos;
-        this.XNeg = XNeg;
-        this.YPos = YPos;
-        this.YNeg = YNeg;
-        this.sensors = new List<IMySensorBlock>(){ XPos, XNeg, YPos, YNeg };
-        this.CubeSize = XPos.CubeGrid.GridSize;
-        this.SensorToWelderDist = this.CubeSize * 1.5f;
-        foreach(var sensor in this.sensors) {
-            sensor.DetectPlayers = false;
-            sensor.DetectFloatingObjects = false;
-            sensor.DetectAsteroids = false;
+        this.Name = name;
+        this.Arm = program.BuildArmFromName(name, welders[0]);
+        this.Arm.Z = new ReverseSlider<Slider>(this.Arm.Z);
+        this.Welders = welders;
+        this.Velocity = new Vector3D(velocity, velocity/2.0, velocity);
+        this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, velocity/2.0);
+        this.Step = step;
+        this.DepthStep = depth_step;
+        this.last_move = 0;
+        this.MaxI.X = (int)((this.Arm.Max.X + this.Step - 1.0) / this.Step);
+        this.MaxI.Y = (int)((this.Arm.Max.Y + this.Step - 1.0) / this.Step);
+        this.MaxI.Z = (int)((this.Arm.Max.Z + this.DepthStep - 1.0) / this.DepthStep);
+        this.StartFill = start_fill;
+        this.StopFill = stop_fill;
+        this.ComponentTypeList = component_type_list;
+        this.Welding = false;
+        this.Damaged = false;
 
-            sensor.DetectSubgrids = true;
-            sensor.DetectSmallShips = true;
-            sensor.DetectLargeShips = true;
-            sensor.DetectStations = true;
-            sensor.DetectOwner = true;
-            sensor.DetectFriendly = true;
-            sensor.DetectNeutral = true;
-            sensor.DetectEnemy = true;
+        this.Refresh();
+        this.BuildPosI();
+    }
 
-            sensor.LeftExtend = 0.0f;
-            sensor.RightExtend = 0.0f;
-            sensor.TopExtend = 0.0f;
-            sensor.BottomExtend = this.SensorToWelderDist + 0.5f;
-            sensor.FrontExtend = 0.0f;
-            sensor.BackExtend = 0.0f;
+    void RefreshDamaged() {
+        this.Damaged = false;
+        var first_inv = this.Welders[0].GetInventory();
+        foreach(var welder in this.Welders) {
+            var slim = welder.CubeGrid.GetCubeBlock(welder.Position);
+            var connected = welder.GetInventory().IsConnectedTo(first_inv);
+            if(slim.CurrentDamage > 0 || !connected) {
+                Echo("Welder: damage: " + slim.CurrentDamage + "; connected: " + connected);
+                this.Damaged = true;
+                break;
+            }
         }
     }
 
-    public void SetRange(float range) {
-        foreach(var sensor in this.sensors) {
-            sensor.FrontExtend = 0.0f;
-            sensor.BottomExtend = this.SensorToWelderDist + range;
-            sensor.LeftExtend = 0.0f;
-            sensor.RightExtend = 0.0f;
-        }
-    }
 
-    public void SideDetection(int direction, float range) {
-        foreach(var s in this.sensors) {
-            s.BottomExtend = 0.0f;
-            s.FrontExtend = 0.0f;
-            s.LeftExtend = 0.0f;
-            s.RightExtend = 0.0f;
-        }
-        IMySensorBlock sensor = null;
-        switch(direction) {
-            case EXTEND_X:
-                sensor = this.XPos;
-                break;
-            case EXTEND_Y:
-                sensor = this.YPos;
-                break;
-            case RETRACT_X:
-                sensor = this.XNeg;
-                break;
-            case RETRACT_Y:
-                sensor = this.YNeg;
-                break;
-            default:
-                break;
-        }
-        if(sensor != null) {
-            sensor.FrontExtend = range;
-            sensor.BottomExtend = this.SensorToWelderDist;
-            sensor.LeftExtend = this.CubeSize/2;
-            sensor.RightExtend = this.CubeSize/2;
-        }
-    }
+    public void RefreshWeldingState() {
+        var list = new List<Sandbox.ModAPI.Ingame.IMyTerminalBlock>();
+        this.Program.GridTerminalSystem.GetBlocks(list);
 
-    Nullable<double> GetSensorDepth(IMySensorBlock sensor) {
-        var list = new List<MyDetectedEntityInfo>();
-        sensor.DetectedEntities(list);
-        var ret = 10000.0;
-        foreach(var entity in list) {
-            var target = entity.HitPosition;
-            var source_pos = sensor.GetPosition();
-            if(target != null) {
-                var dist = Vector3D.DistanceSquared((Vector3D)target, source_pos);
-                if(dist < ret) {
-                    ret = dist;
+        this.WeldingState = InventoryState.Start;
+        this.MissingItems = new List<MyItemType>();
+        foreach(var type in this.ComponentTypeList) {
+            var nb = 0.0;
+            foreach(var block in list) {
+                for(var i = 0; i < block.InventoryCount; i++) {
+                    var inv = block.GetInventory(i);
+                    nb += (double)inv.GetItemAmount(type);
+                    if(nb > this.StartFill) {
+                        break;
+                    }
+                }
+                if(nb > this.StartFill) {
+                    break;
                 }
             }
-        }
-        if(ret == 10000.0) {
-            return null;
-        } else {
-            return Math.Sqrt(ret);
-        }
-    }
-
-    public double? XPosDepth() {
-        return GetSensorDepth(this.XPos);
-    }
-
-    public double? XNegDepth() {
-        return GetSensorDepth(this.XNeg);
-    }
-
-    public double? YPosDepth() {
-        return GetSensorDepth(this.YPos);
-    }
-
-    public double? YNegDepth() {
-        return GetSensorDepth(this.YNeg);
-    }
-
-    public bool IsActive() {
-        foreach(var sensor in this.sensors) {
-            if(sensor.IsActive) {
-                return true;
+            if(nb < this.StopFill) {
+                this.WeldingState = InventoryState.Stop;
+                Echo("Missing " + type.SubtypeId);
+                this.MissingItems.Add(type);
+                break;
+            } else if(nb < this.StartFill) {
+                this.WeldingState = InventoryState.Continue;
+                Echo("Low on " + type.SubtypeId);
+                this.MissingItems.Add(type);
             }
         }
-        return false;
     }
-}
 
-public DepthSensors GetDepthSensors(string name) {
-    var list = new List<IMySensorBlock>();
-    GridTerminalSystem.GetBlocksOfType<IMySensorBlock>(list);
-    IMySensorBlock XPos = null;
-    IMySensorBlock XNeg = null;
-    IMySensorBlock YPos = null;
-    IMySensorBlock YNeg = null;
-    foreach(var sensor in list) {
-        if(sensor.CustomName == name + " X+") {
-            XPos = sensor;
-        } else if(sensor.CustomName == name + " X-") {
-            XNeg = sensor;
-        } else if(sensor.CustomName == name + " Y+") {
-            YPos = sensor;
-        } else if(sensor.CustomName == name + " Y-") {
-            YNeg = sensor;
+    void BuildPosI() {
+        int x;
+        int y;
+        int z = (int)(this.Arm.Pos.Z / this.DepthStep);
+
+        bool y_extend = (z % 2 == 0);
+        bool x_extend;
+        if(y_extend) {
+            y = 0;
+            x_extend = (y % 2 == 0);
+        } else {
+            y = this.MaxI.Y;
+            x_extend = !(y % 2 == 0);
         }
+        if(x_extend) {
+            x = 0;
+        } else {
+            x = this.MaxI.X;
+        }
+
+        this.PosI.X = x;
+        this.PosI.Y = y;
+        this.PosI.Z = z;
+        this.CurrentVelocity = this.Velocity;
+        this.RefreshDst();
     }
-    if(XPos == null || XNeg == null || YPos == null || YNeg == null) {
-        return null;
-    } else {
-        return new DepthSensors(this, XPos, XNeg, YPos, YNeg);
-    }
-}
 
-public const float LONG_RANGE = 2.0f;
-public const float MID_RANGE = 1.0f;
-public const float SHORT_RANGE = 0.5f;
-
-public class AutoWelder {
-    Program Program;
-    public Vector3I PosI;
-    public Vector3I MinI;
-    public Vector3I MaxI;
-    public Vector3D Min;
-    public Welder Welder;
-    public DepthSensors Sensors;
-    public Vector3D Velocity;
-    public Vector3D Fast;
-    public Vector3D MidVelocity;
-    string Name;
-    int WeldDuration;
-    int RemainingWeld;
-    Vector3D NextPos;
-    double Step;
-    float MidRange;
-    float WeldDistance;
-
-    enum State {
-        ExtendingFast,
-        Extending,
-        ExtendingSlow,
-        Welding,
-        Retracting,
-        Moving,
-        ParkingRetracting,
-        Parking,
-        Parked,
-    }
-    State state;
-    State NextState;
-
-    public AutoWelder(Program program, string name, Welder welder, DepthSensors sensors, Vector3D velocity, int duration, double step, double weld_distance) {
-        this.Program = program;
-        this.Welder = welder;
-        this.Sensors = sensors;
-        this.Velocity = velocity;
-        this.Fast = new Vector3D(5.0, 5.0, 5.0);
-        this.MidVelocity = new Vector3D(2.5, 2.5, 2.5);
-        this.Name = name;
-        this.Step = this.Welder.BlockSize * step;
-        var max = this.Welder.Arm.Max;
-        this.MaxI.X = (int)((max.X + this.Step - 1.0) / this.Step);
-        this.MaxI.Y = (int)((max.Y + this.Step - 1.0) / this.Step);
-        this.MaxI.Z = (int)((max.Z + this.Step - 1.0) / this.Step);
-        this.state = State.Extending;
-        this.WeldDuration = duration;
-        this.RemainingWeld = 0;
-        this.Min.X = (double)this.MinI.X * this.Step;
-        this.Min.Y = (double)this.MinI.Y * this.Step;
-        this.Min.Z = (double)this.MinI.Z * this.Step;
-        this.Welder.Arm.Start();
-        this.Sensors.SetRange(LONG_RANGE);
-        this.WeldDistance = (float)weld_distance;
-        this.MidRange = Math.Max((float)weld_distance, MID_RANGE);
+    void RefreshDst() {
+        this.Dst.X = Math.Min((float)this.PosI.X * this.Step + 0.1f, this.Arm.Max.X);
+        this.Dst.Y = Math.Min((float)this.PosI.Y * this.Step + 0.1f, this.Arm.Max.Y);
+        this.Dst.Z = Math.Min((float)this.PosI.Z * this.DepthStep + 1f, this.Arm.Max.Z);
     }
 
     public void Refresh() {
-        this.Welder.Refresh();
-        var pos = this.Welder.Arm.Pos;
-        this.PosI.X = (int)(pos.X / this.Step);
-        this.PosI.Y = (int)(pos.Y / this.Step);
-        this.PosI.Z = (int)(pos.Z / this.Step);
+        this.RefreshDamaged();
+        this.Arm.Refresh();
+        this.RefreshWeldingState();
     }
 
     public int SelectMove() {
         int x = this.PosI.X;
         int y = this.PosI.Y;
+        int z = this.PosI.Z;
         int max_x = this.MaxI.X;
         int max_y = this.MaxI.Y;
-        if(y % 2 == 0) {
-            if(x != max_x) {
-                return EXTEND_X;
-            } else {
-                if(y == max_y) {
-                    return PARKING;
+        int max_z = this.MaxI.Z;
+        if(z % 2 == 0) {
+            if(y % 2 == 0) {
+                if(x != max_x) {
+                    return EXTEND_X;
                 } else {
-                    return EXTEND_Y;
+                    if(y != max_y) {
+                        return EXTEND_Y;
+                    } else {
+                        return EXTEND_Z;
+                    }
+                }
+            } else {
+                if(x != 0) {
+                    return RETRACT_X;
+                } else {
+                    if(y != max_y) {
+                        return EXTEND_Y;
+                    } else {
+                        return EXTEND_Z;
+                    }
                 }
             }
         } else {
-            if(x != 0) {
-                return RETRACT_X;
-            } else {
-                if(y == max_y) {
-                    return PARKING;
+            if(y % 2 == 0) {
+                if(x != 0) {
+                    return RETRACT_X;
                 } else {
-                    return EXTEND_Y;
+                    if(y != 0) {
+                        return RETRACT_Y;
+                    } else {
+                        return EXTEND_Z;
+                    }
+                }
+            } else {
+                if(x != max_x) {
+                    return EXTEND_X;
+                } else {
+                    if(y != 0) {
+                        return RETRACT_Y;
+                    } else {
+                        return EXTEND_Z;
+                    }
                 }
             }
         }
     }
 
-    public Vector3D? NextPosFromMove(int move) {
-        var arm = this.Welder.Arm;
-        var dst = new Vector3D(arm.Pos.X, arm.Pos.Y, arm.Pos.Z);
-        switch(move) {
-            case EXTEND_X:
-                dst.X = (double)(this.PosI.X + 1) * this.Step;
-                break;
-            case EXTEND_Y:
-                dst.Y = (double)(this.PosI.Y + 1) * this.Step;
-                break;
-            case RETRACT_X:
-                dst.X = (double)(this.PosI.X - 1) * this.Step;
-                break;
-            case RETRACT_Y:
-                dst.Y = (double)(this.PosI.Y - 1) * this.Step;
-                break;
-            case PARKING:
-                return null;
-            default:
-                break;
+    public void Run() {
+        if(this.Damaged) {
+            if(this.Welding) {
+                this.Stop();
+            }
+            return;
         }
-        dst.Z = 0.0;
-        return dst;
+
+        if(this.Welding) {
+            if(this.WeldingState == InventoryState.Stop) {
+                this.Stop();
+                return;
+            }
+        } else {
+            if(this.WeldingState == InventoryState.Start) {
+                this.Start();
+            } else {
+                return;
+            }
+        }
+
+        if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2) {
+            var move = this.SelectMove();
+
+            this.last_move = move;
+
+            switch(move) {
+                case EXTEND_X:
+                    if(this.PosI.X == this.MaxI.X - 1) {
+                        this.PosI.X = this.MaxI.X;
+                        this.CurrentVelocity = this.VelocitySlow;
+                    } else {
+                        this.PosI.X = this.MaxI.X - 1;
+                        this.CurrentVelocity = this.Velocity;
+                    }
+                    break;
+                case EXTEND_Y:
+                    this.PosI.Y += 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                case EXTEND_Z:
+                    this.PosI.Z += 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                case RETRACT_X:
+                    if(this.PosI.X == 1) {
+                        this.PosI.X = 0;
+                        this.CurrentVelocity = this.VelocitySlow;
+                    } else {
+                        this.PosI.X = 1;
+                        this.CurrentVelocity = this.Velocity;
+                    }
+                    break;
+                case RETRACT_Y:
+                    this.PosI.Y -= 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                case RETRACT_Z:
+                    this.PosI.Z -= 1;
+                    this.CurrentVelocity = this.VelocitySlow;
+                    break;
+                default:
+                    break;
+            }
+            this.RefreshDst();
+        }
+        this.Arm.MoveTo(this.Dst, this.CurrentVelocity);
     }
 
-    public void Run() {
-        this.Refresh();
-        var arm = this.Welder.Arm;
+    public void Start() {
+        this.Arm.Start();
 
-        var dst = new Vector3D(arm.Pos.X, arm.Pos.Y, arm.Pos.Z);
-        switch(this.state) {
-            case State.ExtendingFast:
-                if(!this.Sensors.IsActive()) {
-                    dst.Z = arm.Max.Z;
-                    arm.Move(dst, this.Fast);
-                } else {
-                    this.state = State.Extending;
-                    this.Sensors.SetRange(this.MidRange);
-                    arm.Move(dst, this.MidVelocity);
-                }
-                break;
-            case State.Extending:
-                if(!this.Sensors.IsActive()) {
-                    dst.Z = arm.Max.Z;
-                    arm.Move(dst, this.MidVelocity);
-                } else {
-                    this.state = State.ExtendingSlow;
-                    this.Sensors.SetRange(this.WeldDistance);
-                    arm.Move(dst, this.Velocity);
-                }
-                break;
-            case State.ExtendingSlow:
-                if(!this.Sensors.IsActive()) {
-                    dst.Z = arm.Max.Z;
-                    arm.Move(dst, this.Velocity);
-                } else {
-                    this.state = State.Welding;
-                    this.RemainingWeld = this.WeldDuration;
-                    this.Welder.welder.Enabled = true;
-
-                    var move = this.SelectMove();
-                    var next_pos = this.NextPosFromMove(move);
-                    if(next_pos != null) {
-                        this.NextPos = (Vector3D)next_pos;
-                    }
-                    if(move == PARKING) {
-                        this.NextState = State.ParkingRetracting;
-                    } else {
-                        this.NextState = State.Moving;
-                    }
-                    this.Sensors.SideDetection(move, (float)this.Step);
-                    arm.Stop();
-                }
-                break;
-            case State.Welding:
-                this.RemainingWeld--;
-                if(this.RemainingWeld <= 0) {
-                    this.state = State.Retracting;
-                    arm.Start();
-                    this.Welder.welder.Enabled = false;
-                }
-                break;
-            case State.Retracting:
-                if(dst.Z > 0.0 && this.Sensors.IsActive()) {
-                    dst.Z = 0.0;
-                    arm.Move(dst, this.Fast);
-                } else {
-                    this.state = this.NextState;
-                    this.NextPos.Z = dst.Z;
-                }
-                break;
-            case State.Moving:
-                if(arm.Pos == this.NextPos) {
-                    this.state = State.Extending;
-                } else {
-                    arm.Move(this.NextPos, this.Fast);
-                    this.Sensors.SetRange(LONG_RANGE);
-                }
-                break;
-            case State.ParkingRetracting:
-                if(arm.Pos.Z == 0.0) {
-                    this.state = State.Parking;
-                } else {
-                    dst.Z = Min.Z;
-                    Echo("Move " + dst + " " + this.Fast);
-                    arm.Move(dst, this.Fast);
-                }
-                break;
-            case State.Parking:
-                if(arm.Pos == Min) {
-                    this.state = State.Parked;
-                } else {
-                    arm.Move(this.Min, this.Fast);
-                }
-                break;
-            case State.Parked:
-                break;
+        foreach(var welder in this.Welders) {
+            welder.Enabled = true;
         }
+        this.Welding = true;
+    }
+
+    public void Stop() {
+        this.Arm.Stop();
+
+        foreach(var welder in this.Welders) {
+            welder.Enabled = false;
+        }
+        this.Welding = false;
     }
 
     public void Print() {
-        var arm = this.Welder.Arm;
-        Echo("X: " + arm.X.Pos.ToString("0.0") + "/" + arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
-        Echo("Y: " + arm.Y.Pos.ToString("0.0") + "/" + arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
-        Echo("Z: " + arm.Z.Pos.ToString("0.0") + "/" + arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
-        Echo("Sensor: " + this.Sensors.IsActive());
-        Echo("State: " + this.state);
+        Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
+        Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
+        Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
+        if(this.Damaged) {
+            Echo("Damaged!");
+        } else if(this.Welding) {
+            switch(this.last_move) {
+                case EXTEND_X:
+                    Echo("Moving: X+ " + this.Arm.X.StateToString());
+                    break;
+                case EXTEND_Y:
+                    Echo("Moving: Y+ " + this.Arm.Y.StateToString());
+                    break;
+                case EXTEND_Z:
+                    Echo("Moving: Z+ " + this.Arm.Z.StateToString());
+                    break;
+                case RETRACT_X:
+                    Echo("Moving: X- " + this.Arm.X.StateToString());
+                    break;
+                case RETRACT_Y:
+                    Echo("Moving: Y- " + this.Arm.Y.StateToString());
+                    break;
+                case RETRACT_Z:
+                    Echo("Moving: Z- " + this.Arm.Z.StateToString());
+                    break;
+                default:
+                    break;
+            }
+        } else {
+            Echo("Stopped mining");
+        }
     }
 
     public void Echo(string s) {
         this.Program.Echo(this.Name + ": " + s);
     }
-
-    public bool IsParked() {
-        return this.state == State.Parked;
-    }
 }
 
-AutoWelder GetAutoWelder(string name, double velocity, int weld_duration, double step, double weld_distance) {
-    var welder = GetWelder(name);
-    var sensors = GetDepthSensors(name);
-    if(welder == null || sensors == null) {
+const double StartFill = 2.0;
+const double StopFill = 1.0;
+public WeldingPrinter GetWeldingPrinter(string name, float velocity, float step, float depth_step) {
+    var list = new List<IMyShipWelder>();
+    GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(list);
+    var welders = new List<IMyShipWelder>();
+    foreach(var welder in list) {
+        if(welder.CustomName == name) {
+            welders.Add(welder);
+        }
+    }
+    if(welders.Count == 0) {
+        // Echo("Could not find any drill for " + name);
         return null;
     }
-    return new AutoWelder(this, name, welder, sensors, new Vector3D(velocity, velocity, velocity), weld_duration, step, weld_distance);
-}
 
-List<AutoWelder> auto_welders;
-public void InitAutoWelders(string name_prefix, double velocity, int weld_duration, double step, double weld_distance) {
-    for(var i = 0; i < 100; i++) {
-        var auto_welder = GetAutoWelder(name_prefix + " " + i, velocity, weld_duration, step, weld_distance);
-        if(auto_welder == null) {
-            return;
-        }
-        this.auto_welders.Add(auto_welder);
+    var component_names = new string[] {
+        "SteelPlate",
+        "Construction",
+        "Motor",
+        "MetalGrid",
+        "LargeTube",
+        "SmallTube",
+        "Display",
+        "Computer",
+        "Medical",
+        "SolarCell",
+        "PowerCell",
+        "Detector",
+        "Girder",
+        "Thrust",
+        "Reactor",
+        "BulletproofGlass",
+        "RadioCommunication",
+        "GravityGenerator",
+        "Superconductor",
+    };
+    var component_types = component_names.Select((c) => MyItemType.MakeComponent(c)).ToArray();
+
+    var printer = new WeldingPrinter(this, name, welders, velocity, step, depth_step, StartFill, StopFill, component_types);
+    if(printer.Arm.Empty()) {
+        Echo(name + " has no arm. Not a printer.");
+        return null;
+    } else {
+        return printer;
     }
 }
 
+List<WeldingPrinter> printers;
 public Program() {
-    Runtime.UpdateFrequency |= UpdateFrequency.Update10;
-    this.auto_welders = new List<AutoWelder>();
+    this.printers = new List<WeldingPrinter>();
+
+    IMyTextSurface surface = Me.GetSurface(0);
+    surface.ContentType = ContentType.TEXT_AND_IMAGE;
+    surface.FontSize = 2;
+    surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
+
+    Runtime.UpdateFrequency |= UpdateFrequency.Update100;
+    // Runtime.UpdateFrequency |= UpdateFrequency.Update1;
+}
+
+public void InitWeldingPrinters(string name_prefix, float velocity, float step, float depth_step) {
+    for(var i = 0; i < 100; i++) {
+        var welder = GetWeldingPrinter(name_prefix + " " + i, velocity, step, depth_step);
+        if(welder == null) {
+            return;
+        }
+        this.printers.Add(welder);
+    }
+}
+
+public double Progress() {
+    var tot = 0.0;
+    var consumed = 0.0;
+    foreach(var printer in this.printers) {
+        tot += printer.Arm.Max.X * printer.Arm.Max.Y * printer.Arm.Max.Z;
+        consumed += printer.Arm.Pos.Z * printer.Arm.Max.X * printer.Arm.Max.Y;
+    }
+    return consumed/tot;
+}
+
+public void UpdateProgressScreen() {
+    var progress = Progress() * 100;
+    IMyTextSurface surface = Me.GetSurface(0);
+    var lines = new List<string>() {
+        "Progress: " + progress.ToString("0.000") + "%",
+    };
+    if(this.printers.Count == 1) {
+        var printer = this.printers[0];
+        lines.Add("X: " + printer.Arm.X.Pos.ToString("0.0") + "/" + printer.Arm.X.Max);
+        lines.Add("Y: " + printer.Arm.Y.Pos.ToString("0.0") + "/" + printer.Arm.Y.Max);
+        lines.Add("Z: " + printer.Arm.Z.Pos.ToString("0.0") + "/" + printer.Arm.Z.Max);
+        if(printer.MissingItems.Count > 0) {
+            var type = printer.MissingItems[0];
+            lines.Add("Missing " + type.SubtypeId);
+        }
+    }
+    surface.WriteText(String.Join("\n", lines.ToArray()));
 }
 
 public void Main(string argument) {
-    if(this.auto_welders.Count == 0) {
+    if(this.printers.Count == 0) {
         var args = argument.Split(' ').ToList();
-        if (args.Count >= 5) {
+        if (args.Count >= 3) {
             var name_prefix = args[0];
-            var velocity = double.Parse(args[1]);
-            var weld_duration = int.Parse(args[2]);
-            var step = double.Parse(args[3]);
-            var weld_distance = double.Parse(args[4]);
-            InitAutoWelders(name_prefix, velocity, weld_duration, step, weld_distance);
-            if(this.auto_welders.Count > 0) {
-                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+            var velocity = float.Parse(args[1]);
+            var step = float.Parse(args[2]);
+            var depth_step = float.Parse(args[3]);
+            InitWeldingPrinters(name_prefix, velocity, step, depth_step);
+            if(this.printers.Count == 0) {
+                Echo("Could not find any welding printer");
+                return;
             }
         } else {
-            Echo("Missing arguments: " + args.Count + " < 3\n" + argument);
-            Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
+            Echo("Missing arguments: " + args.Count + " < 3");
+            Runtime.UpdateFrequency &= ~UpdateFrequency.Update100;
             return;
         }
     }
+    // this.Refresh();
 
-    var all_parked = true;
     var i = 0;
-    foreach(var auto_welder in this.auto_welders) {
-        auto_welder.Run();
-        auto_welder.Print();
-        if(!auto_welder.IsParked()) {
-            all_parked = false;
-        }
+    foreach(var printer in this.printers) {
+        printer.Refresh();
+        printer.Run();
+        printer.Print();
         i++;
     }
-    if(all_parked) {
-        Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
-    }
+
+    UpdateProgressScreen();
 }
