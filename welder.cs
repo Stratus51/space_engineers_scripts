@@ -1550,45 +1550,29 @@ public class WeldingPrinter {
             }
         }
 
-        if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2) {
+        if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2 && this.TargetIsComplete()) {
             var move = this.SelectMove();
 
             this.last_move = move;
 
             switch(move) {
                 case EXTEND_X:
-                    if(this.PosI.X == this.MaxI.X - 1) {
-                        this.PosI.X = this.MaxI.X;
-                        this.CurrentVelocity = this.VelocitySlow;
-                    } else {
-                        this.PosI.X = this.MaxI.X - 1;
-                        this.CurrentVelocity = this.Velocity;
-                    }
+                    this.PosI.X += 1;
                     break;
                 case EXTEND_Y:
                     this.PosI.Y += 1;
-                    this.CurrentVelocity = this.VelocitySlow;
                     break;
                 case EXTEND_Z:
                     this.PosI.Z += 1;
-                    this.CurrentVelocity = this.VelocitySlow;
                     break;
                 case RETRACT_X:
-                    if(this.PosI.X == 1) {
-                        this.PosI.X = 0;
-                        this.CurrentVelocity = this.VelocitySlow;
-                    } else {
-                        this.PosI.X = 1;
-                        this.CurrentVelocity = this.Velocity;
-                    }
+                    this.PosI.X -= 1;
                     break;
                 case RETRACT_Y:
                     this.PosI.Y -= 1;
-                    this.CurrentVelocity = this.VelocitySlow;
                     break;
                 case RETRACT_Z:
                     this.PosI.Z -= 1;
-                    this.CurrentVelocity = this.VelocitySlow;
                     break;
                 default:
                     break;
