@@ -1283,6 +1283,94 @@ public const int RETRACT_Y = 4;
 public const int RETRACT_Z = 5;
 public const int CENTERING = 6;
 
+public class GridItemBuffer {
+    public class ItemRequirement {
+        public MyItemType Type;
+        public float[] Thresholds;
+        public ItemRequirement(MyItemType type, float[] thresholds) {
+            this.Type = type;
+            this.Thresholds = thresholds;
+        }
+
+        public uint GetState(IMyInventory[] inventories) {
+            uint state = 0;
+            uint max_state = (uint)this.Thresholds.Length;
+            if(state == max_state) {
+                return state;
+            }
+
+            float total = 0.0f;
+            foreach(var inventory in inventories) {
+                total += (float)inventory.GetItemAmount(this.Type);
+                while(total >= this.Thresholds[state]) {
+                    state++;
+                    if(state == max_state) {
+                        return state;
+                    }
+                }
+            }
+            return state;
+        }
+    }
+
+    public class RequirementState {
+        public MyItemType Type;
+        public uint State;
+
+        public RequirementState(MyItemType type, uint state) {
+            this.Type = type;
+            this.State = state;
+        }
+    }
+
+    public class BufferState {
+        RequirementState[] States;
+
+        public BufferState(RequirementState[] states) {
+            this.States = states;
+        }
+
+        public MyItemType[] ItemsWithStateBelowOrEqualTo(uint limit_state) {
+            var ret = new List<MyItemType>();
+            foreach(var req in this.States) {
+                if(req.State <= limit_state) {
+                    ret.Add(req.Type);
+                }
+            }
+            return ret.ToArray();
+        }
+    }
+
+    Program Program;
+    ItemRequirement[] Requirements;
+
+    public GridItemBuffer(Program program, ItemRequirement[] requirements) {
+        this.Program = program;
+        this.Requirements = requirements;
+    }
+
+    public BufferState GetState() {
+        // TODO Cache result to calculate it at most once per program tick
+        var list = new List<IMyTerminalBlock>();
+        this.Program.GridTerminalSystem.GetBlocks(list);
+        var inventories_list = new List<IMyInventory>();
+        foreach(var block in list) {
+            for(var i = 0; i < block.InventoryCount; i++) {
+                inventories_list.Add(block.GetInventory(i));
+            }
+        }
+
+        var inventories = inventories_list.ToArray();
+        var req_states = new List<RequirementState>();
+        foreach(var req in this.Requirements) {
+            var state = req.GetState(inventories);
+            req_states.Add(new RequirementState(req.Type, state));
+        }
+
+        return new BufferState(req_states.ToArray());
+    }
+}
+
 public class WeldingPrinter {
     public Arm Arm;
     public Vector3D Dst;
@@ -1299,19 +1387,16 @@ public class WeldingPrinter {
     string Name;
     double StartFill;
     double StopFill;
-    MyItemType[] ComponentTypeList;
     bool Welding;
-    public List<MyItemType> MissingItems;
-    InventoryState WeldingState;
+    public MyItemType[] MissingItems;
     public bool Damaged;
 
-    enum InventoryState {
-        Stop,
-        Continue,
-        Start,
-    }
+    GridItemBuffer GridBuffer;
+    const uint INVENTORY_STATE_STOP = 0;
+    const uint INVENTORY_STATE_CONTINUE = 1;
+    const uint INVENTORY_STATE_START = 2;
 
-    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, float velocity, float step, float depth_step, double start_fill, double stop_fill, MyItemType[] component_type_list) {
+    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, float velocity, float step, float depth_step, double start_fill, double stop_fill, GridItemBuffer grid_buffer) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, welders[0]);
@@ -1327,7 +1412,7 @@ public class WeldingPrinter {
         this.MaxI.Z = (int)((this.Arm.Max.Z + this.DepthStep - 1.0) / this.DepthStep);
         this.StartFill = start_fill;
         this.StopFill = stop_fill;
-        this.ComponentTypeList = component_type_list;
+        this.GridBuffer = grid_buffer;
         this.Welding = false;
         this.Damaged = false;
 
@@ -1345,40 +1430,6 @@ public class WeldingPrinter {
                 Echo("Welder: damage: " + slim.CurrentDamage + "; connected: " + connected);
                 this.Damaged = true;
                 break;
-            }
-        }
-    }
-
-
-    public void RefreshWeldingState() {
-        var list = new List<Sandbox.ModAPI.Ingame.IMyTerminalBlock>();
-        this.Program.GridTerminalSystem.GetBlocks(list);
-
-        this.WeldingState = InventoryState.Start;
-        this.MissingItems = new List<MyItemType>();
-        foreach(var type in this.ComponentTypeList) {
-            var nb = 0.0;
-            foreach(var block in list) {
-                for(var i = 0; i < block.InventoryCount; i++) {
-                    var inv = block.GetInventory(i);
-                    nb += (double)inv.GetItemAmount(type);
-                    if(nb > this.StartFill) {
-                        break;
-                    }
-                }
-                if(nb > this.StartFill) {
-                    break;
-                }
-            }
-            if(nb < this.StopFill) {
-                this.WeldingState = InventoryState.Stop;
-                Echo("Missing " + type.SubtypeId);
-                this.MissingItems.Add(type);
-                break;
-            } else if(nb < this.StartFill) {
-                this.WeldingState = InventoryState.Continue;
-                Echo("Low on " + type.SubtypeId);
-                this.MissingItems.Add(type);
             }
         }
     }
@@ -1419,7 +1470,6 @@ public class WeldingPrinter {
     public void Refresh() {
         this.RefreshDamaged();
         this.Arm.Refresh();
-        this.RefreshWeldingState();
     }
 
     public int SelectMove() {
@@ -1484,13 +1534,16 @@ public class WeldingPrinter {
             return;
         }
 
+        var inventory_state = this.GridBuffer.GetState();
         if(this.Welding) {
-            if(this.WeldingState == InventoryState.Stop) {
+            this.MissingItems = inventory_state.ItemsWithStateBelowOrEqualTo(INVENTORY_STATE_STOP);
+            if(this.MissingItems.Length > 0) {
                 this.Stop();
                 return;
             }
         } else {
-            if(this.WeldingState == InventoryState.Start) {
+            this.MissingItems = inventory_state.ItemsWithStateBelowOrEqualTo(INVENTORY_STATE_CONTINUE);
+            if(this.MissingItems.Length == 0) {
                 this.Start();
             } else {
                 return;
@@ -1639,9 +1692,12 @@ public WeldingPrinter GetWeldingPrinter(string name, float velocity, float step,
         "GravityGenerator",
         "Superconductor",
     };
-    var component_types = component_names.Select((c) => MyItemType.MakeComponent(c)).ToArray();
+    var requirements = component_names
+        .Select((c) => MyItemType.MakeComponent(c))
+        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{1, 2}));
+    var grid_buffer = new GridItemBuffer(this, requirements.ToArray());
 
-    var printer = new WeldingPrinter(this, name, welders, velocity, step, depth_step, StartFill, StopFill, component_types);
+    var printer = new WeldingPrinter(this, name, welders, velocity, step, depth_step, StartFill, StopFill, grid_buffer);
     if(printer.Arm.Empty()) {
         Echo(name + " has no arm. Not a printer.");
         return null;
@@ -1694,7 +1750,7 @@ public void UpdateProgressScreen() {
         lines.Add("X: " + printer.Arm.X.Pos.ToString("0.0") + "/" + printer.Arm.X.Max);
         lines.Add("Y: " + printer.Arm.Y.Pos.ToString("0.0") + "/" + printer.Arm.Y.Max);
         lines.Add("Z: " + printer.Arm.Z.Pos.ToString("0.0") + "/" + printer.Arm.Z.Max);
-        if(printer.MissingItems.Count > 0) {
+        if(printer.MissingItems.Length > 0) {
             var type = printer.MissingItems[0];
             lines.Add("Missing " + type.SubtypeId);
         }
