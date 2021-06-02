@@ -116,8 +116,7 @@ public class Piston: Slider {
 
         this.Min = 0;
         this.Max = piston.HighestPosition;
-        // TODO Hack. Tolerances should be detected automatically.
-        this.Max = 9.7f;
+        this.Max = 10f;
         this.piston = piston;
         this.Refresh();
     }
@@ -1343,10 +1342,12 @@ public class GridItemBuffer {
 
     Program Program;
     ItemRequirement[] Requirements;
+    IMyInventory Destination;
 
-    public GridItemBuffer(Program program, ItemRequirement[] requirements) {
+    public GridItemBuffer(Program program, ItemRequirement[] requirements, IMyInventory destination) {
         this.Program = program;
         this.Requirements = requirements;
+        this.Destination = destination;
     }
 
     public BufferState GetState() {
@@ -1356,7 +1357,10 @@ public class GridItemBuffer {
         var inventories_list = new List<IMyInventory>();
         foreach(var block in list) {
             for(var i = 0; i < block.InventoryCount; i++) {
-                inventories_list.Add(block.GetInventory(i));
+                var inv = block.GetInventory(i);
+                if(inv.IsConnectedTo(this.Destination)) {
+                    inventories_list.Add(inv);
+                }
             }
         }
 
@@ -1379,14 +1383,10 @@ public class WeldingPrinter {
     public List<IMyShipWelder> Welders;
     Program Program;
     int last_move;
-    Vector3D CurrentVelocity;
     Vector3D Velocity;
-    Vector3D VelocitySlow;
     float Step;
     float DepthStep;
     string Name;
-    double StartFill;
-    double StopFill;
     bool Welding;
     public MyItemType[] MissingItems;
     public bool Damaged;
@@ -1396,22 +1396,31 @@ public class WeldingPrinter {
     const uint INVENTORY_STATE_CONTINUE = 1;
     const uint INVENTORY_STATE_START = 2;
 
-    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, float velocity, float step, float depth_step, double start_fill, double stop_fill, GridItemBuffer grid_buffer) {
+    TimeSpan RemainingWeld;
+    const uint PHANTOM_MIN_WELD_TIME = 10;
+    TimeSpan RemainingBlockPos;
+    const uint BLOCK_POSE_TIME = 2;
+
+    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, GridItemBuffer grid_buffer) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, welders[0]);
         this.Arm.Z = new ReverseSlider<Slider>(this.Arm.Z);
         this.Welders = welders;
-        this.Velocity = new Vector3D(velocity, velocity/2.0, velocity);
-        this.VelocitySlow = new Vector3D(velocity/2.0, velocity/2.0, velocity/2.0);
-        this.Step = step;
-        this.DepthStep = depth_step;
+        this.Velocity = new Vector3D(5, 5, 5);
+
+        var grid = welders[0].CubeGrid;
+        if(grid.GridSizeEnum == MyCubeSize.Large) {
+            this.Step = 4.0f;
+        } else {
+            this.Step = 3.0f;
+        }
+        this.DepthStep = grid.GridSize;
+
         this.last_move = 0;
         this.MaxI.X = (int)((this.Arm.Max.X + this.Step - 1.0) / this.Step);
         this.MaxI.Y = (int)((this.Arm.Max.Y + this.Step - 1.0) / this.Step);
         this.MaxI.Z = (int)((this.Arm.Max.Z + this.DepthStep - 1.0) / this.DepthStep);
-        this.StartFill = start_fill;
-        this.StopFill = stop_fill;
         this.GridBuffer = grid_buffer;
         this.Welding = false;
         this.Damaged = false;
@@ -1434,11 +1443,9 @@ public class WeldingPrinter {
         }
     }
 
-    void BuildPosI() {
+    public Vector3I InitPos(int z) {
         int x;
         int y;
-        int z = (int)(this.Arm.Pos.Z / this.DepthStep);
-
         bool y_extend = (z % 2 == 0);
         bool x_extend;
         if(y_extend) {
@@ -1453,18 +1460,25 @@ public class WeldingPrinter {
         } else {
             x = this.MaxI.X;
         }
+        return new Vector3I(x, y, z);
+    }
 
-        this.PosI.X = x;
-        this.PosI.Y = y;
-        this.PosI.Z = z;
-        this.CurrentVelocity = this.Velocity;
+    public Vector3D IntPosToFloat(Vector3I pos_i) {
+        double x = Math.Min((float)pos_i.X * this.Step + 0.1f, this.Arm.Max.X);
+        double y = Math.Min((float)pos_i.Y * this.Step + 0.1f, this.Arm.Max.Y);
+        double z = Math.Min((float)pos_i.Z * this.DepthStep + 1f, this.Arm.Max.Z);
+        return new Vector3D(x, y, z);
+    }
+
+    void BuildPosI() {
+        int z = (int)((this.Arm.Pos.Z - 1f) / this.DepthStep);
+
+        this.PosI = this.InitPos(z);
         this.RefreshDst();
     }
 
     void RefreshDst() {
-        this.Dst.X = Math.Min((float)this.PosI.X * this.Step + 0.1f, this.Arm.Max.X);
-        this.Dst.Y = Math.Min((float)this.PosI.Y * this.Step + 0.1f, this.Arm.Max.Y);
-        this.Dst.Z = Math.Min((float)this.PosI.Z * this.DepthStep + 1f, this.Arm.Max.Z);
+        this.Dst = this.IntPosToFloat(this.PosI);
     }
 
     public void Refresh() {
@@ -1526,6 +1540,54 @@ public class WeldingPrinter {
         }
     }
 
+    bool TargetIsComplete() {
+        Echo("TargetIsComplete");
+        var grid = this.Program.Me.CubeGrid;
+        var block_size = grid.GridSize;
+        foreach(var welder in this.Welders) {
+            // TODO These coordinates seem to be off somehow. Debug required.
+            // I just fixed the coordinate shift. Test that next time.
+            var head_position = welder.CubeGrid.GridIntegerToWorld(welder.Position);
+            var head_perfect_position = head_position + this.Dst - this.Arm.Pos;
+            var front_position = head_perfect_position + (2.5) * block_size * welder.WorldMatrix.Forward;
+
+            var shift = this.Step/2;
+            var target_list = new Vector3D[] {
+                front_position,
+                front_position + shift * welder.WorldMatrix.Up,
+                front_position + shift * welder.WorldMatrix.Up + shift * welder.WorldMatrix.Left,
+                front_position + shift * welder.WorldMatrix.Up - shift * welder.WorldMatrix.Left,
+                front_position - shift * welder.WorldMatrix.Up,
+                front_position - shift * welder.WorldMatrix.Up + shift * welder.WorldMatrix.Left,
+                front_position - shift * welder.WorldMatrix.Up - shift * welder.WorldMatrix.Left,
+                front_position + shift * welder.WorldMatrix.Left,
+                front_position - shift * welder.WorldMatrix.Left,
+            };
+            var blocks = new List<IMySlimBlock>();
+            foreach(var pos in target_list) {
+                var pos_i = grid.WorldToGridInteger(pos);
+                var slim = grid.GetCubeBlock(pos_i);
+                if(slim != null) {
+                    if(!slim.IsFullIntegrity) {
+                        Echo("Incomplete: " + pos_i);
+                        return false;
+                    }
+                } else if(grid.CubeExists(pos_i)) {
+                    if(this.RemainingWeld == null) {
+                        // TODO Test and optimize PHANTOM_MIN_WELD_TIME
+                        this.RemainingWeld = new TimeSpan(0, 0, PHANTOM_MIN_WELD_TIME);
+                    } else {
+                        this.RemainingWeld -= this.Program.Runtime.TimeSinceLastRun;
+                        if(this.RemainingWeld > TimeSpan.Zero) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     public void Run() {
         if(this.Damaged) {
             if(this.Welding) {
@@ -1551,35 +1613,47 @@ public class WeldingPrinter {
         }
 
         if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2 && this.TargetIsComplete()) {
-            var move = this.SelectMove();
+            if(this.TargetIsComplete()) {
+                if(this.RemainingBlockPos == null) {
+                    // TODO Test and optimise BLOCK_POSE_TIME
+                    this.RemainingBlockPos = new TimeSpan(0, 0, BLOCK_POSE_TIME);
+                } else {
+                    this.RemainingBlockPos -= this.Program.Runtime.TimeSinceLastRun;
+                    if(this.RemainingBlockPos < TimeSpan.Zero) {
+                        var move = this.SelectMove();
 
-            this.last_move = move;
+                        this.last_move = move;
 
-            switch(move) {
-                case EXTEND_X:
-                    this.PosI.X += 1;
-                    break;
-                case EXTEND_Y:
-                    this.PosI.Y += 1;
-                    break;
-                case EXTEND_Z:
-                    this.PosI.Z += 1;
-                    break;
-                case RETRACT_X:
-                    this.PosI.X -= 1;
-                    break;
-                case RETRACT_Y:
-                    this.PosI.Y -= 1;
-                    break;
-                case RETRACT_Z:
-                    this.PosI.Z -= 1;
-                    break;
-                default:
-                    break;
+                        switch(move) {
+                            case EXTEND_X:
+                                this.PosI.X += 1;
+                                break;
+                            case EXTEND_Y:
+                                this.PosI.Y += 1;
+                                break;
+                            case EXTEND_Z:
+                                this.PosI.Z += 1;
+                                break;
+                            case RETRACT_X:
+                                this.PosI.X -= 1;
+                                break;
+                            case RETRACT_Y:
+                                this.PosI.Y -= 1;
+                                break;
+                            case RETRACT_Z:
+                                this.PosI.Z -= 1;
+                                break;
+                            default:
+                                break;
+                        }
+                        this.RefreshDst();
+                    }
+                }
+            } else {
+                this.RemainingBlockPos = null;
             }
-            this.RefreshDst();
         }
-        this.Arm.MoveTo(this.Dst, this.CurrentVelocity);
+        this.Arm.MoveTo(this.Dst, this.Velocity);
     }
 
     public void Start() {
@@ -1598,6 +1672,7 @@ public class WeldingPrinter {
             welder.Enabled = false;
         }
         this.Welding = false;
+        this.RemainingWeld = null;
     }
 
     public void Print() {
@@ -1630,7 +1705,7 @@ public class WeldingPrinter {
                     break;
             }
         } else {
-            Echo("Stopped mining");
+            Echo("Stopped welding");
         }
     }
 
@@ -1639,9 +1714,7 @@ public class WeldingPrinter {
     }
 }
 
-const double StartFill = 2.0;
-const double StopFill = 1.0;
-public WeldingPrinter GetWeldingPrinter(string name, float velocity, float step, float depth_step) {
+public WeldingPrinter GetWeldingPrinter(string name) {
     var list = new List<IMyShipWelder>();
     GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(list);
     var welders = new List<IMyShipWelder>();
@@ -1657,6 +1730,7 @@ public WeldingPrinter GetWeldingPrinter(string name, float velocity, float step,
 
     var component_names = new string[] {
         "SteelPlate",
+        "InteriorPlate",
         "Construction",
         "Motor",
         "MetalGrid",
@@ -1678,10 +1752,10 @@ public WeldingPrinter GetWeldingPrinter(string name, float velocity, float step,
     };
     var requirements = component_names
         .Select((c) => MyItemType.MakeComponent(c))
-        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{1, 2}));
-    var grid_buffer = new GridItemBuffer(this, requirements.ToArray());
+        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{50, 100}));
+    var grid_buffer = new GridItemBuffer(this, requirements.ToArray(), welders[0].GetInventory());
 
-    var printer = new WeldingPrinter(this, name, welders, velocity, step, depth_step, StartFill, StopFill, grid_buffer);
+    var printer = new WeldingPrinter(this, name, welders, grid_buffer);
     if(printer.Arm.Empty()) {
         Echo(name + " has no arm. Not a printer.");
         return null;
@@ -1690,36 +1764,20 @@ public WeldingPrinter GetWeldingPrinter(string name, float velocity, float step,
     }
 }
 
-List<WeldingPrinter> printers;
+WeldingPrinter printer;
 public Program() {
-    this.printers = new List<WeldingPrinter>();
-
     IMyTextSurface surface = Me.GetSurface(0);
     surface.ContentType = ContentType.TEXT_AND_IMAGE;
     surface.FontSize = 2;
     surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
 
-    Runtime.UpdateFrequency |= UpdateFrequency.Update100;
     // Runtime.UpdateFrequency |= UpdateFrequency.Update1;
 }
 
-public void InitWeldingPrinters(string name_prefix, float velocity, float step, float depth_step) {
-    for(var i = 0; i < 100; i++) {
-        var welder = GetWeldingPrinter(name_prefix + " " + i, velocity, step, depth_step);
-        if(welder == null) {
-            return;
-        }
-        this.printers.Add(welder);
-    }
-}
-
 public double Progress() {
-    var tot = 0.0;
-    var consumed = 0.0;
-    foreach(var printer in this.printers) {
-        tot += printer.Arm.Max.X * printer.Arm.Max.Y * printer.Arm.Max.Z;
-        consumed += printer.Arm.Pos.Z * printer.Arm.Max.X * printer.Arm.Max.Y;
-    }
+    var printer = this.printer;
+    var tot = printer.Arm.Max.X * printer.Arm.Max.Y * printer.Arm.Max.Z;
+    var consumed = printer.Arm.Pos.Z * printer.Arm.Max.X * printer.Arm.Max.Y;
     return consumed/tot;
 }
 
@@ -1729,47 +1787,107 @@ public void UpdateProgressScreen() {
     var lines = new List<string>() {
         "Progress: " + progress.ToString("0.000") + "%",
     };
-    if(this.printers.Count == 1) {
-        var printer = this.printers[0];
-        lines.Add("X: " + printer.Arm.X.Pos.ToString("0.0") + "/" + printer.Arm.X.Max);
-        lines.Add("Y: " + printer.Arm.Y.Pos.ToString("0.0") + "/" + printer.Arm.Y.Max);
-        lines.Add("Z: " + printer.Arm.Z.Pos.ToString("0.0") + "/" + printer.Arm.Z.Max);
-        if(printer.MissingItems.Length > 0) {
-            var type = printer.MissingItems[0];
-            lines.Add("Missing " + type.SubtypeId);
+    var printer = this.printer;
+    lines.Add("X: " + printer.Arm.X.Pos.ToString("0.0") + "/" + printer.Arm.X.Max);
+    lines.Add("Y: " + printer.Arm.Y.Pos.ToString("0.0") + "/" + printer.Arm.Y.Max);
+    lines.Add("Z: " + printer.Arm.Z.Pos.ToString("0.0") + "/" + printer.Arm.Z.Max);
+    if(printer.MissingItems.Length > 0) {
+        var type = printer.MissingItems[0];
+        lines.Add("Missing " + type.SubtypeId);
+    }
+    var missing_text = String.Join("\n", lines.ToArray());
+    surface.WriteText(missing_text);
+    Echo(missing_text);
+}
+
+Dictionary<string, string> ParseConf() {
+    var ret = new Dictionary<string, string>();
+    foreach(string line in Me.CustomData.Split('\n')) {
+        if(line.Length > 0) {
+            var parts = line.Split('=').ToList();
+            if(parts.Count != 2) {
+                Echo("Bad configuration line: " + line);
+                return null;
+            }
+            ret.Add(parts[0], parts[1]);
         }
     }
-    surface.WriteText(String.Join("\n", lines.ToArray()));
+    return ret;
+}
+
+bool Init() {
+    var conf = this.ParseConf();
+    if(conf == null) {
+        return false;
+    }
+    if(!conf.ContainsKey("name")) {
+        Echo("Configuration missing 'name' field.");
+        return false;
+    }
+    this.printer = GetWeldingPrinter(conf["name"]);
+    return true;
+}
+
+void PrintSyntax() {
+    Echo("Syntax: <command>");
+    Echo("  command:");
+    Echo("    - 'start'");
+    Echo("    - 'stop'");
+    Echo("    - 'reset'");
+    Echo("    - 'init' (only if welder blocks changed)");
 }
 
 public void Main(string argument) {
-    if(this.printers.Count == 0) {
-        var args = argument.Split(' ').ToList();
-        if (args.Count >= 3) {
-            var name_prefix = args[0];
-            var velocity = float.Parse(args[1]);
-            var step = float.Parse(args[2]);
-            var depth_step = float.Parse(args[3]);
-            InitWeldingPrinters(name_prefix, velocity, step, depth_step);
-            if(this.printers.Count == 0) {
-                Echo("Could not find any welding printer");
-                return;
-            }
-        } else {
-            Echo("Missing arguments: " + args.Count + " < 3");
-            Runtime.UpdateFrequency &= ~UpdateFrequency.Update100;
+    if(this.printer == null) {
+        if(!this.Init()) {
             return;
         }
     }
-    // this.Refresh();
 
-    var i = 0;
-    foreach(var printer in this.printers) {
-        printer.Refresh();
-        printer.Run();
-        printer.Print();
-        i++;
+    var args = argument.Split(' ').ToList();
+    if (args.Count >= 1) {
+        var cmd = args[0];
+        Echo("Command: " + cmd);
+        switch(cmd) {
+            case "":
+                break;
+            case "start":
+                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+                break;
+            case "stop":
+                this.printer.Stop();
+                Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
+                return;
+            case "reset":
+                this.printer.Stop();
+                this.printer.Arm.Start();
+                var reset_pos = this.printer.IntPosToFloat(this.printer.InitPos(0));
+                this.printer.Arm.MoveTo(reset_pos, new Vector3D(5, 5, 5));
+                Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
+                return;
+            case "init":
+                this.Init();
+                Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
+                return;
+            default:
+                Echo("Unknown command '" + cmd + "'");
+                PrintSyntax();
+                return;
+        }
+    } else {
+        Echo("Missing arguments");
+        PrintSyntax();
+        Runtime.UpdateFrequency &= ~UpdateFrequency.Update10;
+        return;
     }
+
+    if(this.printer == null) {
+        return;
+    }
+
+    this.printer.Refresh();
+    this.printer.Run();
+    this.printer.Print();
 
     UpdateProgressScreen();
 }
