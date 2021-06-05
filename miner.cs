@@ -1403,7 +1403,7 @@ public class Miner {
     public bool Mining;
     public bool Damaged;
     GridItemBuffer GridBuffer;
-    public MyItemType[] MissingItems;
+    public MyItemType[] MissingItems = new MyItemType[] {};
     IMySoundBlock[] Sounds;
     TimeSpan RemainingSound;
 
@@ -1593,7 +1593,7 @@ public class Miner {
 
         var inventory_state = this.GridBuffer.GetState();
         if(this.Mining) {
-            if(this.CurrentVolume() >= this.MaxVolume * this.MaxFill) {
+            if(this.CurrentVolume() >= this.MaxVolume * this.MaxFill && this.Arm.IsStable()) {
                 this.Stop();
                 return;
             }
@@ -1604,8 +1604,8 @@ public class Miner {
             }
         } else {
             this.MissingItems = inventory_state.ItemsWithStateBelowOrEqualTo(INVENTORY_STATE_CONTINUE);
-            if(this.MissingItems.Length == 0) {
-                if(this.CurrentVolume() <= this.MaxVolume * this.MinFill ) {
+            if(this.MissingItems.Length == 0 || !this.Arm.IsStable()) {
+                if(this.CurrentVolume() <= this.MaxVolume * this.MinFill) {
                     this.Start();
                 } else {
                     return;
@@ -1710,7 +1710,7 @@ public class Miner {
         Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
         Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
         Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
-        if(this.MissingItems.Length > 0) {
+        if(this.MissingItems.Length > 0 && this.Arm.IsStable()) {
             this.RemainingSound -= this.Program.Runtime.TimeSinceLastRun;
             this.StartSound("Fun Music", 60);
         } else {
@@ -1825,7 +1825,7 @@ public Program() {
     surface.FontSize = 2;
     surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
 
-    Runtime.UpdateFrequency |= UpdateFrequency.Update100;
+    Runtime.UpdateFrequency = UpdateFrequency.Update100;
     // Runtime.UpdateFrequency |= UpdateFrequency.Update1;
 }
 
@@ -1872,19 +1872,41 @@ public void UpdateProgressScreen() {
     surface.WriteText(String.Join("\n", lines.ToArray()));
 }
 
+Dictionary<string, string> ParseConf() {
+    var ret = new Dictionary<string, string>();
+    foreach(string line in Me.CustomData.Split('\n')) {
+        if(line.Length > 0) {
+            var parts = line.Split('=').ToList();
+            if(parts.Count != 2) {
+                Echo("Bad configuration line: " + line);
+                return null;
+            }
+            ret.Add(parts[0], parts[1]);
+        }
+    }
+    return ret;
+}
+
+bool Init() {
+    var conf = this.ParseConf();
+    if(conf == null) {
+        return false;
+    }
+    if(!conf.ContainsKey("name")) {
+        Echo("Configuration missing 'name' field.");
+        return false;
+    }
+    InitMiners(conf["name"]);
+    if(this.miners.Count == 0) {
+        Echo("Could not find any miner");
+        return false;
+    }
+    return true;
+}
+
 public void Main(string argument) {
     if(this.miners.Count == 0) {
-        var args = argument.Split(' ').ToList();
-        if (args.Count >= 1 && args[0].Length > 0) {
-            var name_prefix = args[0];
-            InitMiners(name_prefix);
-            if(this.miners.Count == 0) {
-                Echo("Could not find any miner");
-                return;
-            }
-        } else {
-            Echo("Missing arguments: " + args.Count + " < 1");
-            Runtime.UpdateFrequency &= ~UpdateFrequency.Update100;
+        if(!Init()) {
             return;
         }
     }
