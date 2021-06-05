@@ -39,18 +39,39 @@ public void Dump() {
     Echo(nb_throw_out + " throwing out.");
 }
 
+Dictionary<string, string> ParseConf() {
+    var ret = new Dictionary<string, string>();
+    foreach(string line in Me.CustomData.Split('\n')) {
+        if(line.Length > 0) {
+            var parts = line.Split('=').ToList();
+            if(parts.Count != 2) {
+                Echo("Bad configuration line: " + line);
+                return null;
+            }
+            ret.Add(parts[0], parts[1]);
+        }
+    }
+    return ret;
+}
+
+bool Init() {
+    var conf = this.ParseConf();
+    if(conf == null) {
+        return false;
+    }
+    if(!conf.ContainsKey("name")) {
+        Echo("Configuration missing 'name' field.");
+        return false;
+    }
+    InitDumpers(conf["name"]);
+    return true;
+}
+
 public void Main(string argument)
 {
     var args = argument.Split(' ').ToList();
     if(this.dumpers.Count == 0){
-        if (args.Count >= 1 && args[0].Length > 0) {
-            var name_prefix = args[0];
-            InitDumpers(name_prefix);
-        } else {
-            Echo("Missing arguments: " + args.Count + " < 1");
-            Runtime.UpdateFrequency &= ~UpdateFrequency.Update100;
-            return;
-        }
+        this.Init();
     }
 
     Dump();
