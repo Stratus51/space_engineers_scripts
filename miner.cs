@@ -1284,6 +1284,99 @@ public const int RETRACT_Z = 5;
 public const int CENTERING = 6;
 public const float SLOW_DRILL_SPEED = 0.2f;
 
+public class GridItemBuffer {
+    public class ItemRequirement {
+        public MyItemType Type;
+        public float[] Thresholds;
+        public ItemRequirement(MyItemType type, float[] thresholds) {
+            this.Type = type;
+            this.Thresholds = thresholds;
+        }
+
+        public uint GetState(IMyInventory[] inventories) {
+            uint state = 0;
+            uint max_state = (uint)this.Thresholds.Length;
+            if(state == max_state) {
+                return state;
+            }
+
+            float total = 0.0f;
+            foreach(var inventory in inventories) {
+                total += (float)inventory.GetItemAmount(this.Type);
+                while(total >= this.Thresholds[state]) {
+                    state++;
+                    if(state == max_state) {
+                        return state;
+                    }
+                }
+            }
+            return state;
+        }
+    }
+
+    public class RequirementState {
+        public MyItemType Type;
+        public uint State;
+
+        public RequirementState(MyItemType type, uint state) {
+            this.Type = type;
+            this.State = state;
+        }
+    }
+
+    public class BufferState {
+        RequirementState[] States;
+
+        public BufferState(RequirementState[] states) {
+            this.States = states;
+        }
+
+        public MyItemType[] ItemsWithStateBelowOrEqualTo(uint limit_state) {
+            var ret = new List<MyItemType>();
+            foreach(var req in this.States) {
+                if(req.State <= limit_state) {
+                    ret.Add(req.Type);
+                }
+            }
+            return ret.ToArray();
+        }
+    }
+
+    Program Program;
+    ItemRequirement[] Requirements;
+    IMyInventory Destination;
+
+    public GridItemBuffer(Program program, ItemRequirement[] requirements, IMyInventory destination) {
+        this.Program = program;
+        this.Requirements = requirements;
+        this.Destination = destination;
+    }
+
+    public BufferState GetState() {
+        // TODO Cache result to calculate it at most once per program tick
+        var list = new List<IMyTerminalBlock>();
+        this.Program.GridTerminalSystem.GetBlocks(list);
+        var inventories_list = new List<IMyInventory>();
+        foreach(var block in list) {
+            for(var i = 0; i < block.InventoryCount; i++) {
+                var inv = block.GetInventory(i);
+                if(inv.IsConnectedTo(this.Destination)) {
+                    inventories_list.Add(inv);
+                }
+            }
+        }
+
+        var inventories = inventories_list.ToArray();
+        var req_states = new List<RequirementState>();
+        foreach(var req in this.Requirements) {
+            var state = req.GetState(inventories);
+            req_states.Add(new RequirementState(req.Type, state));
+        }
+
+        return new BufferState(req_states.ToArray());
+    }
+}
+
 public class Miner {
     public Arm Arm;
     public Vector3D Dst;
@@ -1304,25 +1397,35 @@ public class Miner {
     float MinFill;
     public bool Mining;
     public bool Damaged;
+    GridItemBuffer GridBuffer;
+    public MyItemType[] MissingItems;
+    IMySoundBlock[] Sounds;
+    TimeSpan RemainingSound;
 
-    public Miner(Program program, string name, IMyShipDrill[] drills, IMyFunctionalBlock[] systems, float velocity, float step, float depth_step, float max_fill, float min_fill) {
+    const uint INVENTORY_STATE_STOP = 0;
+    const uint INVENTORY_STATE_CONTINUE = 1;
+    const uint INVENTORY_STATE_START = 2;
+
+    public Miner(Program program, string name, IMyShipDrill[] drills, IMyFunctionalBlock[] systems, GridItemBuffer grid_buffer) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, drills[0]);
         this.Drills = drills;
         this.Systems = systems;
+        var velocity = 1f;
         this.Velocity = new Vector3D(velocity, velocity, SLOW_DRILL_SPEED);
         this.VelocitySlow = new Vector3D(SLOW_DRILL_SPEED, SLOW_DRILL_SPEED, SLOW_DRILL_SPEED);
-        this.Step = step;
-        this.DepthStep = depth_step;
+        this.Step = 2f;
+        this.DepthStep = 1f;
         this.last_move = 0;
         this.MaxI.X = (int)((this.Arm.Max.X + this.Step - 1.0) / this.Step);
         this.MaxI.Y = (int)((this.Arm.Max.Y + this.Step - 1.0) / this.Step);
         this.MaxI.Z = (int)((this.Arm.Max.Z + this.DepthStep - 1.0) / this.DepthStep);
-        this.MaxFill = max_fill;
-        this.MinFill = min_fill;
+        this.MaxFill = 0.5f;
+        this.MinFill = 0.5f;
         this.Mining = false;
         this.Damaged = false;
+        this.GridBuffer = grid_buffer;
 
         this.MaxVolume = 0.0f;
         foreach(var drill in this.Drills) {
@@ -1330,6 +1433,16 @@ public class Miner {
         }
         this.Refresh();
         this.BuildPosI();
+
+        var list = new List<IMySoundBlock>();
+        this.Program.GridTerminalSystem.GetBlocksOfType<IMySoundBlock>(list);
+        var sounds = new List<IMySoundBlock>();
+        foreach(var sound in list) {
+            if(sound.CustomName == name) {
+                sounds.Add(sound);
+            }
+        }
+        this.Sounds = sounds.ToArray();
     }
 
     public float CurrentVolume() {
@@ -1468,16 +1581,25 @@ public class Miner {
             return;
         }
 
+        var inventory_state = this.GridBuffer.GetState();
         if(this.Mining) {
             if(this.CurrentVolume() >= this.MaxVolume * this.MaxFill) {
                 this.Stop();
                 return;
             }
-        } else {
-            if(this.CurrentVolume() <= this.MaxVolume * this.MinFill) {
-                this.Start();
-            } else {
+            this.MissingItems = inventory_state.ItemsWithStateBelowOrEqualTo(INVENTORY_STATE_STOP);
+            if(this.MissingItems.Length > 0) {
+                this.Stop();
                 return;
+            }
+        } else {
+            this.MissingItems = inventory_state.ItemsWithStateBelowOrEqualTo(INVENTORY_STATE_CONTINUE);
+            if(this.MissingItems.Length == 0) {
+                if(this.CurrentVolume() <= this.MaxVolume * this.MinFill ) {
+                    this.Start();
+                } else {
+                    return;
+                }
             }
         }
 
@@ -1553,12 +1675,43 @@ public class Miner {
         this.Mining = false;
     }
 
+    public void StartSound(string name, int duration) {
+        if(this.RemainingSound <= TimeSpan.Zero) {
+            foreach(var sound in this.Sounds) {
+                sound.Enabled = true;
+                sound.SelectedSound = name;
+                sound.LoopPeriod = duration;
+                sound.Range = 500;
+                sound.Play();
+            }
+            this.RemainingSound = new TimeSpan(0, 0, duration);
+        }
+    }
+
+    public void StopSound() {
+        foreach(var sound in this.Sounds) {
+            sound.Enabled = false;
+            sound.Stop();
+        }
+        this.RemainingSound = new TimeSpan(0, 0, 0);
+    }
+
     public void Print() {
         Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
         Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
         Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
+        if(this.MissingItems.Length > 0) {
+            this.RemainingSound -= this.Program.Runtime.TimeSinceLastRun;
+            this.StartSound("Fun Music", 60);
+        } else {
+            this.StopSound();
+        }
         if(this.Damaged) {
             Echo("Damaged!");
+        } else if(this.MissingItems.Length > 0) {
+            foreach(var missing in this.MissingItems) {
+                Echo("Missing " + missing.SubtypeId);
+            }
         } else if(this.Mining) {
             switch(this.last_move) {
                 case EXTEND_X:
@@ -1583,7 +1736,7 @@ public class Miner {
                     break;
             }
         } else {
-            Echo("Stopped mining");
+            Echo("Stopped mining: drills are full.");
         }
     }
 
@@ -1594,7 +1747,7 @@ public class Miner {
 
 const float MaxFill = 0.20f;
 const float MinFill = 0.0f;
-public Miner GetMiner(string name, float velocity, float step, float depth_step) {
+public Miner GetMiner(string name) {
     var list = new List<IMyShipDrill>();
     GridTerminalSystem.GetBlocksOfType<IMyShipDrill>(list);
     var drills = new List<IMyShipDrill>();
@@ -1626,7 +1779,25 @@ public Miner GetMiner(string name, float velocity, float step, float depth_step)
         }
     }
 
-    var miner = new Miner(this, name, drills.ToArray(), systems.ToArray(), velocity, step, depth_step, MaxFill, MinFill);
+    var requirements = new Dictionary<string, int>();
+    requirements.Add("SteelPlate", (130 + 20) + (7 + 5) + 0 + 0);
+    requirements.Add("InteriorPlate", 0 + 0 + 14 + 2*20);
+    requirements.Add("Computer", 20 + 2 + 0 + 0);
+    requirements.Add("LargeTube", 0 + 6 + 0 + 0);
+    requirements.Add("Motor", 8 + 2 + 6 + 2*6);
+    requirements.Add("SmallTube", 12 + 0 + 12 + 2*20);
+    requirements.Add("Construction", 40 + 15 + 20 + 2*30);
+    var requirements_list = new List<GridItemBuffer.ItemRequirement>();
+    foreach(var entry in requirements) {
+        requirements_list.Add(
+            new GridItemBuffer.ItemRequirement(MyItemType.MakeComponent(entry.Key),
+            new float[2] { entry.Value, 2*entry.Value })
+        );
+    }
+
+    var grid_buffer = new GridItemBuffer(this, requirements_list.ToArray(), drills[0].GetInventory());
+
+    var miner = new Miner(this, name, drills.ToArray(), systems.ToArray(), grid_buffer);
     if(miner.Arm.Empty()) {
         Echo(name + " has no arm. Not a miner.");
         return null;
@@ -1648,9 +1819,9 @@ public Program() {
     // Runtime.UpdateFrequency |= UpdateFrequency.Update1;
 }
 
-public void InitMiners(string name_prefix, float velocity, float step, float depth_step) {
+public void InitMiners(string name_prefix) {
     for(var i = 0; i < 100; i++) {
-        var miner = GetMiner(name_prefix + " " + i, velocity, step, depth_step);
+        var miner = GetMiner(name_prefix + " " + i);
         if(miner == null) {
             return;
         }
@@ -1681,6 +1852,9 @@ public void UpdateProgressScreen() {
         lines.Add("Z: " + miner.Arm.Z.Pos.ToString("0.0") + "/" + miner.Arm.Z.Max);
         if(miner.Damaged) {
             lines.Add("/!\\ Damaged /!\\");
+        } else if(miner.MissingItems.Length > 0) {
+            var type = miner.MissingItems[0];
+            lines.Add("Missing " + type.SubtypeId);
         } else if(!miner.Mining) {
             lines.Add("Drills full. Paused.");
         }
@@ -1696,7 +1870,7 @@ public void Main(string argument) {
             var velocity = float.Parse(args[1]);
             var step = float.Parse(args[2]);
             var depth_step = float.Parse(args[3]);
-            InitMiners(name_prefix, velocity, step, depth_step);
+            InitMiners(name_prefix);
             if(this.miners.Count == 0) {
                 Echo("Could not find any miner");
                 return;
