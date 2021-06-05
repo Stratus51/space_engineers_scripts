@@ -1375,6 +1375,13 @@ public class GridItemBuffer {
     }
 }
 
+static Vector3D VectorInGrid(Vector3D v, IMyCubeGrid grid) {
+    var x = Vector3D.Dot(v, grid.WorldMatrix.Up);
+    var y = Vector3D.Dot(v, grid.WorldMatrix.Right);
+    var z = Vector3D.Dot(v, grid.WorldMatrix.Forward);
+    return new Vector3D(x, y, z);
+}
+
 public class WeldingPrinter {
     public Arm Arm;
     public Vector3D Dst;
@@ -1391,23 +1398,26 @@ public class WeldingPrinter {
     bool Welding;
     public MyItemType[] MissingItems;
     public bool Damaged;
+    IMySoundBlock[] Sounds;
+    bool PlayingSound = false;
 
     GridItemBuffer GridBuffer;
     const uint INVENTORY_STATE_STOP = 0;
     const uint INVENTORY_STATE_CONTINUE = 1;
     const uint INVENTORY_STATE_START = 2;
 
-    TimeSpan? RemainingWeld;
-    const int PHANTOM_MIN_WELD_TIME = 5;
-    TimeSpan? RemainingBlockPos;
-    const int BLOCK_POSE_TIME = 2;
+    TimeSpan RemainingWeldTime;
+    const int PHANTOM_MIN_WELD_TIME = 4;
+    int NbPhantomBlocks = 0;
+    TimeSpan? RemainingBlockPosTime;
+    const int BLOCK_POSE_TIME = 1;
 
-    public const float WELDER_Z_SHIFT = 1f;
+    public const float WELDER_Z_SHIFT = 0.5f;
     public const float VELOCITY = 3f;
 
     public const float NATURAL_WELDING_SHIFT = 0f;
 
-    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, GridItemBuffer grid_buffer) {
+    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, GridItemBuffer grid_buffer, bool big_grid_target) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, welders[0]);
@@ -1417,13 +1427,17 @@ public class WeldingPrinter {
 
         var grid = welders[0].CubeGrid;
         if(grid.GridSizeEnum == MyCubeSize.Large) {
-            this.WeldRadius = 4f*0.5f;
+            this.WeldRadius = 4.0f*0.5f;
         } else {
-            this.WeldRadius = 3f*0.5f;
+            this.WeldRadius = 3.0f*0.5f;
         }
         var excentricity = WELDER_Z_SHIFT + NATURAL_WELDING_SHIFT;
         this.WeldRadius = (float)Math.Sqrt(this.WeldRadius*this.WeldRadius - excentricity*excentricity);
-        this.Step = this.WeldRadius - 0.1f;
+        if(big_grid_target) {
+            this.Step = 2.0f * this.WeldRadius;
+        } else {
+            this.Step = (float)Math.Sqrt(2.0f) * this.WeldRadius;
+        }
         this.DepthStep = grid.GridSize;
 
         this.last_move = 0;
@@ -1436,6 +1450,16 @@ public class WeldingPrinter {
 
         this.Refresh();
         this.BuildPosI();
+
+        var list = new List<IMySoundBlock>();
+        this.Program.GridTerminalSystem.GetBlocksOfType<IMySoundBlock>(list);
+        var sounds = new List<IMySoundBlock>();
+        foreach(var sound in list) {
+            if(sound.CustomName == name) {
+                sounds.Add(sound);
+            }
+        }
+        this.Sounds = sounds.ToArray();
     }
 
     void RefreshDamaged() {
@@ -1549,48 +1573,85 @@ public class WeldingPrinter {
         }
     }
 
-    bool TargetIsComplete() {
+    public bool TargetIsComplete() {
         var grid = this.Program.Me.CubeGrid;
         var block_size = grid.GridSize;
         foreach(var welder in this.Welders) {
             // TODO These coordinates seem to be off somehow. Debug required.
             // I just fixed the coordinate shift. Test that next time.
             var head_position = welder.CubeGrid.GridIntegerToWorld(welder.Position);
-            var head_perfect_position = head_position + this.Dst - this.Arm.Pos;
+            var head_perfect_position = head_position;
             var front_position = head_perfect_position + (2 * block_size + WELDER_Z_SHIFT) * welder.WorldMatrix.Forward;
 
-            var shift = this.WeldRadius - 0.1f;
+            var shift = this.WeldRadius;
+            Echo("Welding radius: " + shift);
+            var sq_2 = (float)Math.Sqrt(2.0)/2.0;
             var target_list = new Vector3D[] {
                 front_position,
                 front_position + shift * welder.WorldMatrix.Up,
-                front_position + shift * (welder.WorldMatrix.Up + welder.WorldMatrix.Left).Normalize(),
-                front_position + shift * (welder.WorldMatrix.Up - welder.WorldMatrix.Left).Normalize(),
                 front_position - shift * welder.WorldMatrix.Up,
-                front_position + shift * (- welder.WorldMatrix.Up + welder.WorldMatrix.Left).Normalize(),
-                front_position + shift * (- welder.WorldMatrix.Up - welder.WorldMatrix.Left).Normalize(),
                 front_position + shift * welder.WorldMatrix.Left,
                 front_position - shift * welder.WorldMatrix.Left,
             };
-            var blocks = new List<IMySlimBlock>();
+            Vector3I min = grid.WorldToGridInteger(front_position);
+            Vector3I max = grid.WorldToGridInteger(front_position);
             foreach(var pos in target_list) {
                 var pos_i = grid.WorldToGridInteger(pos);
-                var slim = grid.GetCubeBlock(pos_i);
-                if(slim != null) {
-                    if(!slim.IsFullIntegrity) {
-                        Echo("Incomplete: " + pos_i);
-                        return false;
-                    }
-                } else if(grid.CubeExists(pos_i)) {
-                    if(this.RemainingWeld == null) {
-                        // TODO Test and optimize PHANTOM_MIN_WELD_TIME
-                        this.RemainingWeld = new TimeSpan(0, 0, PHANTOM_MIN_WELD_TIME);
-                        return false;
-                    } else {
-                        this.RemainingWeld -= this.Program.Runtime.TimeSinceLastRun;
-                        if(this.RemainingWeld > TimeSpan.Zero) {
-                            return false;
+                if(pos_i.X < min.X) {
+                    min.X = pos_i.X;
+                }
+                if(pos_i.Y < min.Y) {
+                    min.Y = pos_i.Y;
+                }
+                if(pos_i.Z < min.Z) {
+                    min.Z = pos_i.Z;
+                }
+                if(pos_i.X > max.X) {
+                    max.X = pos_i.X;
+                }
+                if(pos_i.Y > max.Y) {
+                    max.Y = pos_i.Y;
+                }
+                if(pos_i.Z > max.Z) {
+                    max.Z = pos_i.Z;
+                }
+            }
+
+            var blocks = new List<IMySlimBlock>();
+            var phantom_blocks = new HashSet<Vector3D>();
+            var nb_incomplete = new HashSet<Vector3D>();
+            for(var x = min.X; x < max.X + 1; x++) {
+                for(var y = min.Y; y < max.Y + 1; y++) {
+                    for(var z = min.Z; z < max.Z + 1; z++) {
+                        // var deviation = Vector3D.Dot(pos, welder.WorldMatrix.Forward) - Vector3D.Dot(front_position, welder.WorldMatrix.Forward);
+                        // Echo("Z deviation: " + deviation);
+                        var pos_i = new Vector3I(x, y, z);
+                        var slim = grid.GetCubeBlock(pos_i);
+                        if(slim != null) {
+                            if(!slim.IsFullIntegrity) {
+                                nb_incomplete.Add(pos_i);
+                            }
+                        } else if(grid.CubeExists(pos_i)) {
+                            phantom_blocks.Add(pos_i);
                         }
                     }
+                }
+            }
+            if(nb_incomplete.Count > 0) {
+                Echo("Incomplete: " + nb_incomplete.Count + " blocks");
+                return false;
+            }
+            int detected_phantom_blocks = phantom_blocks.Count;
+            if(detected_phantom_blocks > this.NbPhantomBlocks) {
+                // TODO Test and optimize PHANTOM_MIN_WELD_TIME
+                int nb_new_blocks = detected_phantom_blocks - this.NbPhantomBlocks;
+                this.RemainingWeldTime = new TimeSpan(0, 0, PHANTOM_MIN_WELD_TIME*nb_new_blocks);
+                this.NbPhantomBlocks = detected_phantom_blocks;
+                return false;
+            } else if(detected_phantom_blocks > 0) {
+                this.RemainingWeldTime -= this.Program.Runtime.TimeSinceLastRun;
+                if(this.RemainingWeldTime > TimeSpan.Zero) {
+                    return false;
                 }
             }
         }
@@ -1624,12 +1685,12 @@ public class WeldingPrinter {
         if(Vector3D.Distance(this.Arm.Pos, this.Dst) < 0.2) {
             this.SetWelders(true);
             if(this.TargetIsComplete()) {
-                if(this.RemainingBlockPos == null) {
+                if(this.RemainingBlockPosTime == null) {
                     // TODO Test and optimise BLOCK_POSE_TIME
-                    this.RemainingBlockPos = new TimeSpan(0, 0, BLOCK_POSE_TIME);
+                    this.RemainingBlockPosTime = new TimeSpan(0, 0, BLOCK_POSE_TIME);
                 } else {
-                    this.RemainingBlockPos -= this.Program.Runtime.TimeSinceLastRun;
-                    if(this.RemainingBlockPos < TimeSpan.Zero) {
+                    this.RemainingBlockPosTime -= this.Program.Runtime.TimeSinceLastRun;
+                    if(this.RemainingBlockPosTime < TimeSpan.Zero) {
                         var move = this.SelectMove();
 
                         this.last_move = move;
@@ -1657,13 +1718,13 @@ public class WeldingPrinter {
                                 break;
                         }
                         this.RefreshDst();
-                        this.RemainingWeld = null;
-                        this.RemainingBlockPos = null;
+                        this.RemainingBlockPosTime = null;
+                        this.NbPhantomBlocks = 0;
                         this.SetWelders(false);
                     }
                 }
             } else {
-                this.RemainingBlockPos = null;
+                this.RemainingBlockPosTime = null;
             }
         }
         this.Arm.MoveTo(this.Dst, this.Velocity);
@@ -1685,7 +1746,28 @@ public class WeldingPrinter {
 
         this.SetWelders(false);
         this.Welding = false;
-        this.RemainingWeld = null;
+        this.NbPhantomBlocks = 0;
+        this.RemainingBlockPosTime = null;
+    }
+
+    public void StartSound(string name, int duration) {
+        if(!this.PlayingSound) {
+            foreach(var sound in this.Sounds) {
+                sound.Enabled = true;
+                sound.SelectedSound = name;
+                sound.LoopPeriod = duration;
+                sound.Play();
+            }
+            this.PlayingSound = true;
+        }
+    }
+
+    public void StopSound() {
+        foreach(var sound in this.Sounds) {
+            sound.Enabled = false;
+            sound.Stop();
+        }
+        this.PlayingSound = false;
     }
 
     public void Print() {
@@ -1727,7 +1809,7 @@ public class WeldingPrinter {
     }
 }
 
-public WeldingPrinter GetWeldingPrinter(string name) {
+public WeldingPrinter GetWeldingPrinter(string name, bool big_grid_target) {
     var list = new List<IMyShipWelder>();
     GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(list);
     var welders = new List<IMyShipWelder>();
@@ -1768,7 +1850,7 @@ public WeldingPrinter GetWeldingPrinter(string name) {
         .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{50, 100}));
     var grid_buffer = new GridItemBuffer(this, requirements.ToArray(), welders[0].GetInventory());
 
-    var printer = new WeldingPrinter(this, name, welders, grid_buffer);
+    var printer = new WeldingPrinter(this, name, welders, grid_buffer, big_grid_target);
     if(printer.Arm.Empty()) {
         Echo(name + " has no arm. Not a printer.");
         return null;
@@ -1827,7 +1909,7 @@ bool Init() {
         Echo("Configuration missing 'name' field.");
         return false;
     }
-    this.printer = GetWeldingPrinter(conf["name"]);
+    this.printer = GetWeldingPrinter(conf["name"], !conf.ContainsKey("SmallGrid") || conf["SmallGrid"] != "true");
     return true;
 }
 
@@ -1844,6 +1926,7 @@ enum Command {
     None,
     Run,
     Reset,
+    Scan,
 }
 
 Command CurrentCommand;
@@ -1880,6 +1963,12 @@ public void Main(string argument) {
                 Runtime.UpdateFrequency |= UpdateFrequency.Update10;
                 this.CurrentCommand = Command.Run;
                 break;
+            case "scan":
+                this.printer.Stop();
+                this.printer.Arm.Start();
+                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+                this.CurrentCommand = Command.Scan;
+                break;
             case "stop":
                 this.printer.Stop();
                 StopProgram();
@@ -1888,8 +1977,8 @@ public void Main(string argument) {
             case "reset":
                 this.printer.Stop();
                 this.printer.Arm.Start();
-                Runtime.UpdateFrequency |= UpdateFrequency.Update100;
-                Me.GetSurface(0).WriteText("Resetting.");
+                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+                Me.GetSurface(0).WriteText("Resetting...");
                 this.CurrentCommand = Command.Reset;
                 break;
             case "init":
@@ -1926,20 +2015,40 @@ public void Main(string argument) {
             UpdateProgressScreen();
             break;
         case Command.Reset:
+            this.printer.Arm.Refresh();
             var pos = this.printer.Arm.Pos;
             var target = new Vector3D(pos.X, pos.Y, pos.Z);
             target.X = 0;
             if(pos.X <= 0.1) {
                 target.Y = 0;
+                if(pos.Y <= 0.1) {
+                    target.Z = WeldingPrinter.WELDER_Z_SHIFT;
+                    if(Math.Abs(pos.Z - WeldingPrinter.WELDER_Z_SHIFT) < 0.1) {
+                        StopProgram();
+                        Me.GetSurface(0).WriteText("Resetting Done");
+                        this.Init();
+                    }
+                }
             }
-            if(pos.Y <= 0.1) {
-                target.Z = WeldingPrinter.WELDER_Z_SHIFT;
+            this.printer.Arm.MoveTo(target, new Vector3D(5, 5, 5));
+            break;
+        case Command.Scan:
+            this.printer.Refresh();
+            this.printer.Print();
+            if(this.printer.TargetIsComplete()) {
+                this.printer.StopSound();
+            } else {
+                this.printer.StartSound("Alert 1", 30*60);
             }
-            if(Math.Abs(pos.Z - WeldingPrinter.WELDER_Z_SHIFT) < 0.1) {
-                StopProgram();
+            var blocks = new List<IMyTerminalBlock>();
+            GridTerminalSystem.GetBlocks(blocks);
+            var grid = Me.CubeGrid;
+            foreach(var block in blocks) {
+                if(!block.IsFunctional) {
+                    Echo("Incomplete block: " + VectorToString(VectorInGrid(block.GetPosition(), grid)));
+                }
             }
-            var reset_pos = this.printer.IntPosToFloat(this.printer.InitPos(0));
-            this.printer.Arm.MoveTo(reset_pos, new Vector3D(WeldingPrinter.VELOCITY, WeldingPrinter.VELOCITY, WeldingPrinter.VELOCITY));
+            Me.GetSurface(0).WriteText("Manual scanning.");
             break;
         case Command.None:
             break;
