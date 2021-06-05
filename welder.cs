@@ -1858,7 +1858,7 @@ public WeldingPrinter GetWeldingPrinter(string name, bool big_grid_target) {
     };
     var requirements = component_names
         .Select((c) => MyItemType.MakeComponent(c))
-        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{50, 100}));
+        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{500, 1000}));
     var grid_buffer = new GridItemBuffer(this, requirements.ToArray(), welders[0].GetInventory());
 
     var printer = new WeldingPrinter(this, name, welders, grid_buffer, big_grid_target);
@@ -1949,11 +1949,11 @@ public Program() {
     surface.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.LEFT;
     this.CurrentCommand = Command.None;
 
-    // Runtime.UpdateFrequency |= UpdateFrequency.Update1;
+    // Runtime.UpdateFrequency = UpdateFrequency.Update1;
 }
 
 public void StopProgram() {
-    Runtime.UpdateFrequency &= ~(UpdateFrequency.Update100 | UpdateFrequency.Update10 | UpdateFrequency.Update1);
+    Runtime.UpdateFrequency = UpdateFrequency.None;
 }
 
 public void Main(string argument) {
@@ -1971,13 +1971,13 @@ public void Main(string argument) {
             case "":
                 break;
             case "start":
-                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+                Runtime.UpdateFrequency = UpdateFrequency.Update10;
                 this.CurrentCommand = Command.Run;
                 break;
             case "scan":
                 this.printer.Stop();
                 this.printer.Arm.Start();
-                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+                Runtime.UpdateFrequency = UpdateFrequency.Update10;
                 this.CurrentCommand = Command.Scan;
                 break;
             case "stop":
@@ -1988,7 +1988,7 @@ public void Main(string argument) {
             case "reset":
                 this.printer.Stop();
                 this.printer.Arm.Start();
-                Runtime.UpdateFrequency |= UpdateFrequency.Update10;
+                Runtime.UpdateFrequency = UpdateFrequency.Update10;
                 Me.GetSurface(0).WriteText("Resetting...");
                 this.CurrentCommand = Command.Reset;
                 break;

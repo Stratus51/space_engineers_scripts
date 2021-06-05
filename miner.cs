@@ -982,6 +982,7 @@ public class Arm {
     public Slider Z;
     public Vector3D Pos;
     public Vector3D Max;
+    public bool HasCrawlers = false;
 
     public Arm(Program program, Slider x, Slider y, Slider z) {
         this.Program = program;
@@ -1253,6 +1254,7 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
 
     Echo("Building complex sliders");
     var sliders = new List<Slider>[3];
+    var has_crawlers = false;
     for(var i = 0; i < 3; i++) {
         Echo("Axis " + (Axis)i);
         sliders[i] = new List<Slider>();
@@ -1265,6 +1267,7 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
         if(crawl_sliders.Count > 0) {
             var parallel_crawl_sliders = new Sliders(this, crawl_sliders);
             sliders[i].Add(parallel_crawl_sliders);
+            has_crawlers = true;
         }
     }
 
@@ -1272,7 +1275,9 @@ public Arm BuildArmFromName(string name, IMyCubeBlock top_block) {
     var arm_y = new SliderChain(this, sliders[(int)Axis.Y]);
     var arm_z = new SliderChain(this, sliders[(int)Axis.Z]);
 
-    return new Arm(this, arm_x, arm_y, arm_z);
+    var arm = new Arm(this, arm_x, arm_y, arm_z);
+    arm.HasCrawlers = has_crawlers;
+    return arm;
 }
 
 public const int EXTEND_X = 0;
@@ -1425,7 +1430,12 @@ public class Miner {
         this.MinFill = 0.5f;
         this.Mining = false;
         this.Damaged = false;
-        this.GridBuffer = grid_buffer;
+
+        if(this.Arm.HasCrawlers) {
+            this.GridBuffer = grid_buffer;
+        } else {
+            this.GridBuffer = new GridItemBuffer(program, new GridItemBuffer.ItemRequirement[0] {}, this.Drills[0].GetInventory());
+        }
 
         this.MaxVolume = 0.0f;
         foreach(var drill in this.Drills) {
@@ -1865,18 +1875,15 @@ public void UpdateProgressScreen() {
 public void Main(string argument) {
     if(this.miners.Count == 0) {
         var args = argument.Split(' ').ToList();
-        if (args.Count >= 3) {
+        if (args.Count >= 1 && args[0].Length > 0) {
             var name_prefix = args[0];
-            var velocity = float.Parse(args[1]);
-            var step = float.Parse(args[2]);
-            var depth_step = float.Parse(args[3]);
             InitMiners(name_prefix);
             if(this.miners.Count == 0) {
                 Echo("Could not find any miner");
                 return;
             }
         } else {
-            Echo("Missing arguments: " + args.Count + " < 3");
+            Echo("Missing arguments: " + args.Count + " < 1");
             Runtime.UpdateFrequency &= ~UpdateFrequency.Update100;
             return;
         }
