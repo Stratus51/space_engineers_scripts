@@ -1399,7 +1399,7 @@ public class WeldingPrinter {
     public MyItemType[] MissingItems;
     public bool Damaged;
     IMySoundBlock[] Sounds;
-    bool PlayingSound = false;
+    TimeSpan RemainingSound;
 
     GridItemBuffer GridBuffer;
     const uint INVENTORY_STATE_STOP = 0;
@@ -1751,14 +1751,15 @@ public class WeldingPrinter {
     }
 
     public void StartSound(string name, int duration) {
-        if(!this.PlayingSound) {
+        if(this.RemainingSound <= TimeSpan.Zero) {
             foreach(var sound in this.Sounds) {
                 sound.Enabled = true;
                 sound.SelectedSound = name;
                 sound.LoopPeriod = duration;
+                sound.Range = 500;
                 sound.Play();
             }
-            this.PlayingSound = true;
+            this.RemainingSound = new TimeSpan(0, 0, duration);
         }
     }
 
@@ -1767,15 +1768,25 @@ public class WeldingPrinter {
             sound.Enabled = false;
             sound.Stop();
         }
-        this.PlayingSound = false;
+        this.RemainingSound = new TimeSpan(0, 0, 0);
     }
 
     public void Print() {
         Echo("X: " + this.Arm.X.Pos.ToString("0.0") + "/" + this.Arm.X.Max + " | I: " + this.PosI.X + "/" + this.MaxI.X);
         Echo("Y: " + this.Arm.Y.Pos.ToString("0.0") + "/" + this.Arm.Y.Max + " | I: " + this.PosI.Y + "/" + this.MaxI.Y);
         Echo("Z: " + this.Arm.Z.Pos.ToString("0.0") + "/" + this.Arm.Z.Max + " | I: " + this.PosI.Z + "/" + this.MaxI.Z);
+        if(this.MissingItems.Length > 0) {
+            this.RemainingSound -= this.Program.Runtime.TimeSinceLastRun;
+            this.StartSound("Alert 1", 30*60);
+        } else {
+            this.StopSound();
+        }
         if(this.Damaged) {
             Echo("Damaged!");
+        } else if(this.MissingItems.Length > 0) {
+            foreach(var missing in this.MissingItems) {
+                Echo("Missing " + missing.SubtypeId);
+            }
         } else if(this.Welding) {
             switch(this.last_move) {
                 case EXTEND_X:
@@ -1800,7 +1811,7 @@ public class WeldingPrinter {
                     break;
             }
         } else {
-            Echo("Stopped welding");
+            Echo("Stopped welding.");
         }
     }
 
@@ -1842,8 +1853,8 @@ public WeldingPrinter GetWeldingPrinter(string name, bool big_grid_target) {
         "Reactor",
         "BulletproofGlass",
         "RadioCommunication",
-        "GravityGenerator",
-        "Superconductor",
+        // "GravityGenerator",
+        // "Superconductor",
     };
     var requirements = component_names
         .Select((c) => MyItemType.MakeComponent(c))
