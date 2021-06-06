@@ -1400,6 +1400,7 @@ public class WeldingPrinter {
     public bool Damaged;
     IMySoundBlock[] Sounds;
     TimeSpan RemainingSound;
+    HashSet<string> Blacklist;
 
     GridItemBuffer GridBuffer;
     const uint INVENTORY_STATE_STOP = 0;
@@ -1417,7 +1418,7 @@ public class WeldingPrinter {
 
     public const float NATURAL_WELDING_SHIFT = 0f;
 
-    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, GridItemBuffer grid_buffer, bool big_grid_target) {
+    public WeldingPrinter(Program program, string name, List<IMyShipWelder> welders, GridItemBuffer grid_buffer, bool big_grid_target, HashSet<string> blacklist) {
         this.Program = program;
         this.Name = name;
         this.Arm = program.BuildArmFromName(name, welders[0]);
@@ -1447,6 +1448,7 @@ public class WeldingPrinter {
         this.GridBuffer = grid_buffer;
         this.Welding = false;
         this.Damaged = false;
+        this.Blacklist = blacklist;
 
         this.Refresh();
         this.BuildPosI();
@@ -1628,7 +1630,7 @@ public class WeldingPrinter {
                         var pos_i = new Vector3I(x, y, z);
                         var slim = grid.GetCubeBlock(pos_i);
                         if(slim != null) {
-                            if(!slim.IsFullIntegrity) {
+                            if(!slim.IsFullIntegrity && !this.Blacklist.Contains(slim.BlockDefinition.SubtypeName)) {
                                 nb_incomplete.Add(pos_i);
                             }
                         } else if(grid.CubeExists(pos_i)) {
@@ -1844,12 +1846,12 @@ public WeldingPrinter GetWeldingPrinter(string name, bool big_grid_target) {
         "SmallTube",
         "Display",
         "Computer",
-        "Medical",
+        // "Medical",
         "SolarCell",
         "PowerCell",
         "Detector",
         "Girder",
-        "Thrust",
+        // "Thrust",
         "Reactor",
         "BulletproofGlass",
         "RadioCommunication",
@@ -1858,10 +1860,17 @@ public WeldingPrinter GetWeldingPrinter(string name, bool big_grid_target) {
     };
     var requirements = component_names
         .Select((c) => MyItemType.MakeComponent(c))
-        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{500, 1000}));
+        .Select((t) => new GridItemBuffer.ItemRequirement(t, new float[]{25, 50}));
     var grid_buffer = new GridItemBuffer(this, requirements.ToArray(), welders[0].GetInventory());
 
-    var printer = new WeldingPrinter(this, name, welders, grid_buffer, big_grid_target);
+    var blacklist = new HashSet<string>();
+    blacklist.Add("LargeBlockGravityGenerator");
+    blacklist.Add("LargeBlockGravityGeneratorSphere");
+    blacklist.Add("LargeBlockJumpDrive");
+    blacklist.Add("LargeBlockLargeThrust");
+    blacklist.Add("LargeBlockSmallThrust");
+
+    var printer = new WeldingPrinter(this, name, welders, grid_buffer, big_grid_target, blacklist);
     if(printer.Arm.Empty()) {
         Echo(name + " has no arm. Not a printer.");
         return null;
