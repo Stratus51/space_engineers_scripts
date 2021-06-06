@@ -1417,7 +1417,7 @@ public class Miner {
         this.Arm = program.BuildArmFromName(name, drills[0]);
         this.Drills = drills;
         this.Systems = systems;
-        var velocity = 1f;
+        var velocity = 0.5f;
         this.Velocity = new Vector3D(velocity, velocity, SLOW_DRILL_SPEED);
         this.VelocitySlow = new Vector3D(SLOW_DRILL_SPEED, SLOW_DRILL_SPEED, SLOW_DRILL_SPEED);
         this.Step = 2f;
