@@ -1407,8 +1407,8 @@ public class WeldingPrinter {
     const uint INVENTORY_STATE_CONTINUE = 1;
     const uint INVENTORY_STATE_START = 2;
 
-    TimeSpan RemainingWeldTime;
-    const int PHANTOM_MIN_WELD_TIME = 4;
+    TimeSpan RemainingWeldTime = TimeSpan.Zero;
+    const int PHANTOM_MIN_WELD_TIME = 2;
     int NbPhantomBlocks = 0;
     TimeSpan? RemainingBlockPosTime;
     const int BLOCK_POSE_TIME = 1;
@@ -1579,8 +1579,6 @@ public class WeldingPrinter {
         var grid = this.Program.Me.CubeGrid;
         var block_size = grid.GridSize;
         foreach(var welder in this.Welders) {
-            // TODO These coordinates seem to be off somehow. Debug required.
-            // I just fixed the coordinate shift. Test that next time.
             var head_position = welder.CubeGrid.GridIntegerToWorld(welder.Position);
             var head_perfect_position = head_position;
             var front_position = head_perfect_position + (2 * block_size + WELDER_Z_SHIFT) * welder.WorldMatrix.Forward;
@@ -1625,8 +1623,6 @@ public class WeldingPrinter {
             for(var x = min.X; x < max.X + 1; x++) {
                 for(var y = min.Y; y < max.Y + 1; y++) {
                     for(var z = min.Z; z < max.Z + 1; z++) {
-                        // var deviation = Vector3D.Dot(pos, welder.WorldMatrix.Forward) - Vector3D.Dot(front_position, welder.WorldMatrix.Forward);
-                        // Echo("Z deviation: " + deviation);
                         var pos_i = new Vector3I(x, y, z);
                         var slim = grid.GetCubeBlock(pos_i);
                         if(slim != null) {
@@ -1645,9 +1641,8 @@ public class WeldingPrinter {
             }
             int detected_phantom_blocks = phantom_blocks.Count;
             if(detected_phantom_blocks > this.NbPhantomBlocks) {
-                // TODO Test and optimize PHANTOM_MIN_WELD_TIME
                 int nb_new_blocks = detected_phantom_blocks - this.NbPhantomBlocks;
-                this.RemainingWeldTime = new TimeSpan(0, 0, PHANTOM_MIN_WELD_TIME*nb_new_blocks);
+                this.RemainingWeldTime += new TimeSpan(0, 0, PHANTOM_MIN_WELD_TIME*nb_new_blocks);
                 this.NbPhantomBlocks = detected_phantom_blocks;
                 return false;
             } else if(detected_phantom_blocks > 0) {
@@ -1688,7 +1683,6 @@ public class WeldingPrinter {
             this.SetWelders(true);
             if(this.TargetIsComplete()) {
                 if(this.RemainingBlockPosTime == null) {
-                    // TODO Test and optimise BLOCK_POSE_TIME
                     this.RemainingBlockPosTime = new TimeSpan(0, 0, BLOCK_POSE_TIME);
                 } else {
                     this.RemainingBlockPosTime -= this.Program.Runtime.TimeSinceLastRun;
