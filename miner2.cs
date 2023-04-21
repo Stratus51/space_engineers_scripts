@@ -1,38 +1,26 @@
-﻿static MiningArm[] mining_arms;
+﻿static MiningArmsFinder miningArmsFinder;
+static MiningArm[] mining_arms;
 
 public Program() {
-    Echo("Hello" + Me.SurfaceCount);
-    for (int i = 0; i < Me.SurfaceCount; i++) {
-        IMyTextSurface surface = Me.GetSurface(i);
-        surface.WriteText("Hello " + i + "");
-    }
-    Echo("Grip blocks: " + CoundGridBlocks(Me.CubeGrid));
-    Echo("Joints: " + GetGridJoints().Count);
-    // Echo("Branches: " + GetGridGraph(Me.CubeGrid).GetBranches(null).Count);
-    mining_arms = GetMiningArms(Me.CubeGrid);
-    Echo("Mining arms: " + mining_arms.Length);
-    Runtime.UpdateFrequency = UpdateFrequency.Update100;
+    Runtime.UpdateFrequency = UpdateFrequency.Update1;
+    miningArmsFinder = new MiningArmsFinder(this);
 }
 
 public void Save() {
 }
 
 public void Main(string argument, UpdateType updateSource) {
+    if (mining_arms == null) {
+        mining_arms = miningArmsFinder.Continue();
+        if (mining_arms != null) {
+            Runtime.UpdateFrequency = UpdateFrequency.Update100;
+            Echo("Found " + mining_arms.Length + " mining arms");
+        }
+        return;
+    }
     foreach(MiningArm arm in mining_arms) {
         arm.Run();
     }
-}
-
-int CoundGridBlocks(IMyCubeGrid grid) {
-    int count = 0;
-    Echo("Min: " + grid.Min);
-    Echo("Max: " + grid.Max);
-    foreach(Vector3I pos in Vector3I.EnumerateRange(grid.Min, grid.Max + new Vector3I(1, 1, 1))) {
-        if(grid.CubeExists(pos) ) {
-            count++;
-        }
-    }
-    return count;
 }
 
 const float VERTICAL_STEP_SIZE = 1.0f;
@@ -363,7 +351,6 @@ class MiningArm {
             }
         }
 
-        program.Echo("Found " + grids.Count + " grids");
         Screens = new List<IMyTextPanel>();
         List<IMyTextPanel> all_screens = new List<IMyTextPanel>();
         Program.GridTerminalSystem.GetBlocksOfType(all_screens);
@@ -429,6 +416,95 @@ class MiningArm {
             }
         }
         Arm.Run(speed);
+    }
+}
+
+class MiningArmsFinder {
+    List<IMyShipDrill> Drills;
+    List<IMyShipDrill> FilteredDrills;
+    GridGraphNode Graph;
+    GridBranch[] Branches;
+    MiningArm[] MiningArms;
+    Program Program;
+
+    public MiningArmsFinder(Program program) {
+        Program = program;
+    }
+
+    public MiningArm[] Continue() {
+        if (Drills == null) {
+            Drills = new List<IMyShipDrill>();
+            Program.GridTerminalSystem.GetBlocksOfType(Drills);
+            if (Drills.Count == 0) {
+                Program.Echo("No drills found");
+                return new MiningArm[0];
+            } else {
+                return null;
+            }
+        }
+
+        if (FilteredDrills == null) {
+            FilteredDrills = new List<IMyShipDrill>();
+            foreach(IMyShipDrill drill in Drills) {
+                if (drill.CubeGrid.IsSameConstructAs(Program.Me.CubeGrid)) {
+                    FilteredDrills.Add(drill);
+                }
+            }
+            if (FilteredDrills.Count == 0) {
+                Program.Echo("No drills found");
+                return new MiningArm[0];
+            }
+            return null;
+        }
+
+        if (Graph == null) {
+            Graph = Program.GetGridGraph(Program.Me.CubeGrid);
+            if (Graph == null) {
+                Program.Echo("No graph found");
+                return new MiningArm[0];
+            }
+            return null;
+        }
+
+        if (Branches == null) {
+            Branches = Graph.GetBranches(null).ToArray();
+            if (Branches.Length == 0) {
+                Program.Echo("No branches found");
+                return new MiningArm[0];
+            }
+            return null;
+        }
+
+        if (MiningArms == null) {
+            MiningArms = new MiningArm[Branches.Length];
+            return null;
+        }
+
+        for(int i = 0; i < Branches.Length; i++) {
+            if (MiningArms[i] == null) {
+                GridBranch branch = Branches[i];
+                Program.Echo("Branch " + branch.End.CustomName);
+                List<IMyShipDrill> branchDrills = new List<IMyShipDrill>();
+                foreach(IMyShipDrill drill in FilteredDrills) {
+                    if (drill.CubeGrid == branch.End) {
+                        branchDrills.Add(drill);
+                    }
+                }
+                Program.Echo("Found " + branchDrills.Count + " drills on branch");
+                if (branchDrills.Count > 0) {
+                    IMyShipDrill drill = branchDrills[0];
+                    MatrixD toolMatrix = drill.WorldMatrix;
+                    Matrix omat;
+                    drill.Orientation.GetMatrix(out omat);
+                    toolMatrix = MatrixD.Multiply(omat, toolMatrix);
+                    Program.Echo("Drill " + toolMatrix.Forward.ToString("0.0"));
+                    PistonArm piston_arm = PistonArm.FromGridBranch(Program, branch, toolMatrix);
+                    MiningArms[i] = new MiningArm(Program, branchDrills, piston_arm);
+                }
+            }
+        }
+
+        return MiningArms;
     }
 }
 
