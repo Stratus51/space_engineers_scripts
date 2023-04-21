@@ -8,7 +8,7 @@ public Program() {
     }
     Echo("Grip blocks: " + CoundGridBlocks(Me.CubeGrid));
     Echo("Joints: " + GetGridJoints().Count);
-    Echo("Branches: " + GetGridGraph(Me.CubeGrid).GetBranches(null).Count);
+    // Echo("Branches: " + GetGridGraph(Me.CubeGrid).GetBranches(null).Count);
     mining_arms = GetMiningArms(Me.CubeGrid);
     Echo("Mining arms: " + mining_arms.Length);
     Runtime.UpdateFrequency = UpdateFrequency.Update100;
@@ -41,14 +41,35 @@ const float SPEED_NORMAL = 0.2f;
 const float SPEED_FAST = 2f;
 
 class PistonArmAxis {
-    IMyPistonBase[] PositivePistons;
-    IMyPistonBase[] NegativePistons;
+    public IMyPistonBase[] PositivePistons;
+    public IMyPistonBase[] NegativePistons;
+    public float HighestPosition;
     Program Program;
 
     public PistonArmAxis(Program program, IMyPistonBase[] positivePistons, IMyPistonBase[] negativePistons) {
         Program = program;
         PositivePistons = positivePistons;
         NegativePistons = negativePistons;
+
+        float position = 0;
+        foreach(IMyPistonBase piston in PositivePistons) {
+            position += piston.HighestPosition;
+        }
+        foreach(IMyPistonBase piston in NegativePistons) {
+            position += piston.HighestPosition;
+        }
+        HighestPosition = position;
+    }
+
+    public float CurrentPosition() {
+        float position = 0;
+        foreach(IMyPistonBase piston in PositivePistons) {
+            position += piston.CurrentPosition;
+        }
+        foreach(IMyPistonBase piston in NegativePistons) {
+            position += piston.HighestPosition - piston.CurrentPosition;
+        }
+        return position;
     }
 
     public int NbSteps(float step_size) {
@@ -107,7 +128,7 @@ class PistonArmAxis {
                 float nb_steps = (float)Math.Floor(piston.CurrentPosition / step_size);
                 float nextPos = (nb_steps + 1) * step_size;
                 piston.MaxLimit = nextPos;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
                 return;
             }
         }
@@ -118,7 +139,7 @@ class PistonArmAxis {
                 float nb_steps = (float)Math.Floor(progression / step_size);
                 float nextPos = piston.HighestPosition - (nb_steps + 1) * step_size;
                 piston.MinLimit = nextPos;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
                 return;
             }
         }
@@ -132,7 +153,7 @@ class PistonArmAxis {
                 float nb_steps = (float)Math.Floor(progression / step_size);
                 float nextPos = piston.HighestPosition - (nb_steps + 1) * step_size;
                 piston.MinLimit = nextPos;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
                 return;
             }
         }
@@ -142,7 +163,7 @@ class PistonArmAxis {
                 float nb_steps = (float)Math.Floor(piston.CurrentPosition / step_size);
                 float nextPos = (nb_steps + 1) * step_size;
                 piston.MaxLimit = nextPos;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + nextPos);
                 return;
             }
         }
@@ -153,7 +174,7 @@ class PistonArmAxis {
             if(piston.CurrentPosition < piston.HighestPosition) {
                 piston.Velocity = speed;
                 piston.MaxLimit = piston.HighestPosition;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + piston.HighestPosition);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + piston.HighestPosition);
                 return;
             }
         }
@@ -161,7 +182,7 @@ class PistonArmAxis {
             if(piston.CurrentPosition > piston.LowestPosition) {
                 piston.Velocity = -speed;
                 piston.MinLimit = piston.LowestPosition;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + piston.LowestPosition);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + piston.LowestPosition);
                 return;
             }
         }
@@ -172,7 +193,7 @@ class PistonArmAxis {
             if(piston.CurrentPosition > piston.LowestPosition) {
                 piston.Velocity = -speed;
                 piston.MinLimit = piston.LowestPosition;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + piston.LowestPosition);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + piston.LowestPosition);
                 return;
             }
         }
@@ -180,7 +201,7 @@ class PistonArmAxis {
             if(piston.CurrentPosition < piston.HighestPosition) {
                 piston.Velocity = speed;
                 piston.MaxLimit = piston.HighestPosition;
-                this.Program.Echo("Moving " + piston.CustomName + " to " + piston.HighestPosition);
+                // this.Program.Echo("Moving " + piston.CustomName + " to " + piston.HighestPosition);
                 return;
             }
         }
@@ -198,17 +219,19 @@ class PistonArmAxis {
 
 class PistonArm {
     Program Program;
-    PistonArmAxis[] Axes;
+    public PistonArmAxis[] Axes;
+    public float HighestPosition;
 
     public PistonArm(Program program, PistonArmAxis[] axes) {
         Program = program;
         Axes = axes;
+        HighestPosition = axes[0].HighestPosition * axes[1].HighestPosition * axes[2].HighestPosition;
     }
 
     public static PistonArm FromGridBranch(Program program, GridBranch branch, MatrixD toolMatrix) {
         List<IMyPistonBase> all_pistons = new List<IMyPistonBase>();
         program.GridTerminalSystem.GetBlocksOfType<IMyPistonBase>(all_pistons);
-        program.Echo("Found " + all_pistons.Count + " pistons");
+        // program.Echo("Found " + all_pistons.Count + " pistons");
 
         Dictionary<long, IMyPistonBase> pistons_by_id = new Dictionary<long, IMyPistonBase>();
         foreach(IMyPistonBase piston in all_pistons) {
@@ -222,7 +245,7 @@ class PistonArm {
                 pistons.Add(piston);
             }
         }
-        program.Echo("Found " + pistons.Count + " relevant pistons");
+        // program.Echo("Found " + pistons.Count + " relevant pistons");
 
         List<IMyPistonBase>[] positive_pistons = new List<IMyPistonBase>[3];
         List<IMyPistonBase>[] negative_pistons = new List<IMyPistonBase>[3];
@@ -234,7 +257,7 @@ class PistonArm {
         foreach(IMyPistonBase piston in pistons) {
             Vector3D dir_vec = Vector3D.TransformNormal(piston.WorldMatrix.Up, MatrixD.Transpose(toolMatrix));
             Base6Directions.Direction dir = Base6Directions.GetClosestDirection(dir_vec);
-            program.Echo(piston.CustomName + ": " + dir);
+            // program.Echo(piston.CustomName + ": " + dir);
 
             switch (dir) {
                 case Base6Directions.Direction.Forward:
@@ -273,6 +296,27 @@ class PistonArm {
         return new PistonArm(program, axes);
     }
 
+    public float CurrentPosition() {
+        float position = 0;
+        bool y_inc = Axes[2].NbSteps(VERTICAL_STEP_SIZE) % 2 == 0;
+        bool x_inc = Axes[1].NbSteps(LATERAL_STEP_SIZE) % 2 == 0;
+
+        if (x_inc) {
+            position += Axes[0].CurrentPosition();
+        } else {
+            position += Axes[0].HighestPosition - Axes[0].CurrentPosition();
+        }
+
+        if (y_inc) {
+            position += Axes[1].CurrentPosition() * Axes[0].HighestPosition;
+        } else {
+            position += (Axes[1].HighestPosition - Axes[1].CurrentPosition()) * Axes[0].HighestPosition;
+        }
+        position += Axes[2].CurrentPosition() * Axes[0].HighestPosition * Axes[1].HighestPosition;
+
+        return position;
+    }
+
     public void Stop() {
         foreach(PistonArmAxis axis in Axes) {
             axis.Stop();
@@ -300,12 +344,36 @@ class PistonArm {
 class MiningArm {
     Program Program;
     public List<IMyShipDrill> Drills;
+    public List<IMyTextPanel> Screens;
     PistonArm Arm;
 
     public MiningArm(Program program, List<IMyShipDrill> drills, PistonArm arm) {
         Program = program;
         Drills = drills;
         Arm = arm;
+
+        List<IMyCubeGrid> grids = new List<IMyCubeGrid>();
+        grids.Add(drills[0].CubeGrid);
+        foreach(PistonArmAxis axe in arm.Axes) {
+            foreach(IMyPistonBase piston in axe.PositivePistons) {
+                grids.Add(piston.CubeGrid);
+            }
+            foreach(IMyPistonBase piston in axe.NegativePistons) {
+                grids.Add(piston.CubeGrid);
+            }
+        }
+
+        program.Echo("Found " + grids.Count + " grids");
+        Screens = new List<IMyTextPanel>();
+        List<IMyTextPanel> all_screens = new List<IMyTextPanel>();
+        Program.GridTerminalSystem.GetBlocksOfType(all_screens);
+        foreach(IMyTextPanel screen in all_screens) {
+            if (grids.Contains(screen.CubeGrid)) {
+                screen.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.CENTER;
+                Screens.Add(screen);
+            }
+        }
+        program.Echo("Found " + Screens.Count + " screens");
     }
 
     bool ShouldStop() {
@@ -318,7 +386,33 @@ class MiningArm {
         return (float)current_volume / (float)max_volume > 0.25;
     }
 
+    string RemainingTime() {
+        float position = Arm.CurrentPosition();
+
+        float remaining = Arm.HighestPosition - position;
+        int remaining_seconds = (int)(remaining / SPEED_NORMAL);
+        int remaining_minutes = remaining_seconds / 60;
+        remaining_seconds = remaining_seconds % 60;
+        int remaining_hours = remaining_minutes / 60;
+        remaining_minutes = remaining_minutes % 60;
+        int remaining_days = remaining_hours / 24;
+        remaining_hours = remaining_hours % 24;
+
+        return remaining_days + "d " + remaining_hours + "h " + remaining_minutes + "m " + remaining_seconds + "s";
+    }
+
+    void UpdateScreens() {
+        float position = Arm.CurrentPosition();
+
+        float progression = position * 100 / Arm.HighestPosition;
+        foreach(IMyTextPanel screen in Screens) {
+            var remaining_time = RemainingTime();
+            screen.WriteText("Progression: " + progression.ToString("0.00") + "%" + "\nRemaining time: " + remaining_time);
+        }
+    }
+
     public void Run() {
+        UpdateScreens();
         if (ShouldStop()) {
             Arm.Stop();;
             foreach(IMyShipDrill drill in Drills) {
@@ -354,8 +448,10 @@ MiningArm[] GetMiningArms(IMyCubeGrid grid) {
     }
 
     List<GridBranch> branches = GetGridGraph(grid).GetBranches(null);
+    Echo("Found " + branches.Count + " branches");
     List<MiningArm> arms = new List<MiningArm>();
     foreach(GridBranch branch in branches) {
+        Echo("Branch " + branch.End.CustomName);
         List<IMyShipDrill> branchDrills = new List<IMyShipDrill>();
         foreach(IMyShipDrill drill in drills) {
             if (drill.CubeGrid.IsSameConstructAs(branch.End)) {
