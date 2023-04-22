@@ -397,7 +397,12 @@ class MiningArm {
         float progression = position * 100 / Arm.HighestPosition;
         foreach(IMyTextPanel screen in Screens) {
             var remaining_time = RemainingTime();
-            screen.WriteText("Progression: " + progression.ToString("0.00") + "%" + "\nRemaining time: " + remaining_time);
+            screen.WriteText("Progression: " + progression.ToString("0.00") + "%");
+            screen.WriteText("\nRemaining time: " + remaining_time, true);
+            screen.WriteText("\nX: " + Arm.Axes[0].CurrentPosition().ToString("0.0") + "/" + Arm.Axes[0].HighestPosition, true);
+            screen.WriteText("\nY: " + Arm.Axes[1].CurrentPosition().ToString("0.0") + "/" + Arm.Axes[1].HighestPosition, true);
+            screen.WriteText("\nZ: " + Arm.Axes[2].CurrentPosition().ToString("0.0") + "/" + Arm.Axes[2].HighestPosition, true);
+            screen.WriteText("\nDrills: " + Drills.Count, true);
         }
     }
 
