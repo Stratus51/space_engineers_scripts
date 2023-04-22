@@ -369,6 +369,9 @@ class MiningArm {
         foreach(IMyShipDrill drill in Drills) {
             max_volume += drill.GetInventory(0).MaxVolume;
             current_volume += drill.GetInventory(0).CurrentVolume;
+            if (!drill.IsFunctional) {
+                return true;
+            }
         }
         return (float)current_volume / (float)max_volume > 0.25;
     }
