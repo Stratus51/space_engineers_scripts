@@ -424,7 +424,8 @@ class MiningArmsFinder {
     List<IMyShipDrill> FilteredDrills;
     GridGraphNode Graph;
     GridBranch[] Branches;
-    MiningArm[] MiningArms;
+    int CurrentBranch = 0;
+    List<MiningArm> MiningArms;
     Program Program;
 
     public MiningArmsFinder(Program program) {
@@ -476,78 +477,35 @@ class MiningArmsFinder {
         }
 
         if (MiningArms == null) {
-            MiningArms = new MiningArm[Branches.Length];
+            MiningArms = new List<MiningArm>();
             return null;
         }
 
-        for(int i = 0; i < Branches.Length; i++) {
-            if (MiningArms[i] == null) {
-                GridBranch branch = Branches[i];
-                Program.Echo("Branch " + branch.End.CustomName);
-                List<IMyShipDrill> branchDrills = new List<IMyShipDrill>();
-                foreach(IMyShipDrill drill in FilteredDrills) {
-                    if (drill.CubeGrid == branch.End) {
-                        branchDrills.Add(drill);
-                    }
-                }
-                Program.Echo("Found " + branchDrills.Count + " drills on branch");
-                if (branchDrills.Count > 0) {
-                    IMyShipDrill drill = branchDrills[0];
-                    MatrixD toolMatrix = drill.WorldMatrix;
-                    Matrix omat;
-                    drill.Orientation.GetMatrix(out omat);
-                    toolMatrix = MatrixD.Multiply(omat, toolMatrix);
-                    Program.Echo("Drill " + toolMatrix.Forward.ToString("0.0"));
-                    PistonArm piston_arm = PistonArm.FromGridBranch(Program, branch, toolMatrix);
-                    MiningArms[i] = new MiningArm(Program, branchDrills, piston_arm);
+        if (CurrentBranch < Branches.Length) {
+            GridBranch branch = Branches[CurrentBranch];
+            CurrentBranch++;
+            List<IMyShipDrill> branchDrills = new List<IMyShipDrill>();
+            foreach(IMyShipDrill drill in FilteredDrills) {
+                if (drill.CubeGrid == branch.End) {
+                    branchDrills.Add(drill);
                 }
             }
-        }
-
-        return MiningArms;
-    }
-}
-
-MiningArm[] GetMiningArms(IMyCubeGrid grid) {
-    List<IMyShipDrill> drills = new List<IMyShipDrill>();
-    GridTerminalSystem.GetBlocksOfType<IMyShipDrill>(drills);
-
-    for (int i = drills.Count - 1; i >= 0; i--) {
-        IMyShipDrill drill = drills[i];
-        if (!drill.CubeGrid.IsSameConstructAs(grid)) {
-            drills.RemoveAt(i);
-        }
-    }
-    if (drills.Count == 0) {
-        Echo("No drills found");
-        return new MiningArm[0];
-    }
-
-    List<GridBranch> branches = GetGridGraph(grid).GetBranches(null);
-    Echo("Found " + branches.Count + " branches");
-    List<MiningArm> arms = new List<MiningArm>();
-    foreach(GridBranch branch in branches) {
-        Echo("Branch " + branch.End.CustomName);
-        List<IMyShipDrill> branchDrills = new List<IMyShipDrill>();
-        foreach(IMyShipDrill drill in drills) {
-            if (drill.CubeGrid.IsSameConstructAs(branch.End)) {
-                branchDrills.Add(drill);
+            Program.Echo("Found " + branchDrills.Count + " drills on branch");
+            if (branchDrills.Count > 0) {
+                IMyShipDrill drill = branchDrills[0];
+                MatrixD toolMatrix = drill.WorldMatrix;
+                Matrix omat;
+                drill.Orientation.GetMatrix(out omat);
+                toolMatrix = MatrixD.Multiply(omat, toolMatrix);
+                Program.Echo("Drill " + toolMatrix.Forward.ToString("0.0"));
+                PistonArm piston_arm = PistonArm.FromGridBranch(Program, branch, toolMatrix);
+                MiningArms.Add(new MiningArm(Program, branchDrills, piston_arm));
             }
+            return null;
         }
-        Echo("Found " + branchDrills.Count + " drills on branch");
-        if (branchDrills.Count > 0) {
-            IMyShipDrill drill = branchDrills[0];
-            MatrixD toolMatrix = drill.WorldMatrix;
-            Matrix omat;
-            drill.Orientation.GetMatrix(out omat);
-            toolMatrix = MatrixD.Multiply(omat, toolMatrix);
-            Echo("Drill " + toolMatrix.Forward.ToString("0.0"));
-            PistonArm piston_arm = PistonArm.FromGridBranch(this, branch, toolMatrix);
-            arms.Add(new MiningArm(this, branchDrills, piston_arm));
-        }
-    }
 
-    return arms.ToArray();
+        return MiningArms.ToArray();
+    }
 }
 
 class GridBranch {
@@ -594,6 +552,9 @@ class GridGraphNode {
             newParents.Add(this);
             List<GridBranch> neighborBranches = neighbor.Node.GetBranches(newParents);
             foreach(GridBranch branch in neighborBranches) {
+                if (branch.End == null) {
+                    continue;
+                }
                 branch.Joints.Insert(0, neighbor.Joint);
                 branch.Start = Grid;
                 branches.Add(branch);
