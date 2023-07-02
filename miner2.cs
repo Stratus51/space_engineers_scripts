@@ -1,5 +1,6 @@
 ﻿static MiningArmsFinder miningArmsFinder;
 static MiningArm[] mining_arms;
+static bool running = false;
 
 public Program() {
     Runtime.UpdateFrequency = UpdateFrequency.Update1;
@@ -10,6 +11,39 @@ public void Save() {
 }
 
 public void Main(string argument, UpdateType updateSource) {
+    string[] args = argument.Split(' ');
+
+    if (args.Length == 0 && (running || mining_arms == null)) {
+        Echo("Running");
+        Run();
+        return;
+    }
+
+    string cmd = args[0];
+    Echo("Command: " + cmd);
+    if (cmd == "reset") {
+        foreach(MiningArm arm in mining_arms) {
+            arm.Reset();
+        }
+        Runtime.UpdateFrequency = UpdateFrequency.None;
+        running = false;
+        return;
+    } else if (cmd == "run") {
+        Runtime.UpdateFrequency = UpdateFrequency.Update10;
+        running = true;
+        return;
+    } else if (cmd == "stop") {
+        Runtime.UpdateFrequency = UpdateFrequency.None;
+        running = false;
+        return;
+    } else if (cmd == "" && (running || mining_arms == null)) {
+        Echo("Running");
+        Run();
+        return;
+    }
+}
+
+public void Run() {
     if (mining_arms == null) {
         mining_arms = miningArmsFinder.Continue();
         if (mining_arms != null) {
@@ -25,7 +59,7 @@ public void Main(string argument, UpdateType updateSource) {
 
 const float VERTICAL_STEP_SIZE = 1.0f;
 const float LATERAL_STEP_SIZE = 2.0f;
-const float SPEED_NORMAL = 0.2f;
+const float SPEED_NORMAL = 0.3f;
 const float SPEED_FAST = 2f;
 
 class PistonArmAxis {
@@ -203,6 +237,17 @@ class PistonArmAxis {
             piston.Velocity = 0;
         }
     }
+
+    public void Reset() {
+        foreach(IMyPistonBase piston in PositivePistons) {
+            piston.Velocity = -1f;
+            piston.MinLimit = 0.0f;
+        }
+        foreach(IMyPistonBase piston in NegativePistons) {
+            piston.Velocity = 1f;
+            piston.MaxLimit = piston.HighestPosition;
+        }
+    }
 }
 
 class PistonArm {
@@ -249,10 +294,10 @@ class PistonArm {
 
             switch (dir) {
                 case Base6Directions.Direction.Forward:
-                    positive_pistons[0].Add(piston);
+                    positive_pistons[2].Add(piston);
                     break;
                 case Base6Directions.Direction.Backward:
-                    negative_pistons[0].Add(piston);
+                    negative_pistons[2].Add(piston);
                     break;
                 case Base6Directions.Direction.Up:
                     positive_pistons[1].Add(piston);
@@ -261,10 +306,10 @@ class PistonArm {
                     negative_pistons[1].Add(piston);
                     break;
                 case Base6Directions.Direction.Left:
-                    positive_pistons[2].Add(piston);
+                    positive_pistons[0].Add(piston);
                     break;
                 case Base6Directions.Direction.Right:
-                    negative_pistons[2].Add(piston);
+                    negative_pistons[0].Add(piston);
                     break;
             }
         }
@@ -327,12 +372,18 @@ class PistonArm {
             Axes[2].Inc(speed, VERTICAL_STEP_SIZE);
         }
     }
+
+    public void Reset() {
+        foreach(PistonArmAxis axis in Axes) {
+            axis.Reset();
+        }
+    }
 }
 
 class MiningArm {
     Program Program;
     public List<IMyShipDrill> Drills;
-    public List<IMyTextPanel> Screens;
+    public List<IMyTextSurface> Screens;
     PistonArm Arm;
 
     public MiningArm(Program program, List<IMyShipDrill> drills, PistonArm arm) {
@@ -351,16 +402,12 @@ class MiningArm {
             }
         }
 
-        Screens = new List<IMyTextPanel>();
-        List<IMyTextPanel> all_screens = new List<IMyTextPanel>();
-        Program.GridTerminalSystem.GetBlocksOfType(all_screens);
-        foreach(IMyTextPanel screen in all_screens) {
-            if (grids.Contains(screen.CubeGrid)) {
-                screen.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.CENTER;
-                Screens.Add(screen);
-            }
+        Screens = new List<IMyTextSurface>();
+        for (int i = 0; i < Program.Me.SurfaceCount; i++) {
+            IMyTextSurface screen = Program.Me.GetSurface(i);
+            screen.Alignment = VRage.Game.GUI.TextPanel.TextAlignment.CENTER;
+            Screens.Add(screen);
         }
-        program.Echo("Found " + Screens.Count + " screens");
     }
 
     bool ShouldStop() {
@@ -395,7 +442,7 @@ class MiningArm {
         float position = Arm.CurrentPosition();
 
         float progression = position * 100 / Arm.HighestPosition;
-        foreach(IMyTextPanel screen in Screens) {
+        foreach(IMyTextSurface screen in Screens) {
             var remaining_time = RemainingTime();
             screen.WriteText("Progression: " + progression.ToString("0.00") + "%");
             screen.WriteText("\nRemaining time: " + remaining_time, true);
@@ -406,13 +453,17 @@ class MiningArm {
         }
     }
 
+    void EnableDrills(bool enable) {
+        foreach(IMyShipDrill drill in Drills) {
+            drill.Enabled = enable;
+        }
+    }
+
     public void Run() {
         UpdateScreens();
         if (ShouldStop()) {
             Arm.Stop();;
-            foreach(IMyShipDrill drill in Drills) {
-                drill.Enabled = false;
-            }
+            EnableDrills(false);
             return;
         }
 
@@ -424,6 +475,11 @@ class MiningArm {
             }
         }
         Arm.Run(speed);
+    }
+
+    public void Reset() {
+        EnableDrills(false);
+        Arm.Reset();
     }
 }
 
@@ -476,7 +532,7 @@ class MiningArmsFinder {
         }
 
         if (Branches == null) {
-            Branches = Graph.GetBranches(null).ToArray();
+            Branches = Graph.GetBranchesToDrills(Program).ToArray();
             if (Branches.Length == 0) {
                 Program.Echo("No branches found");
                 return new MiningArm[0];
@@ -502,10 +558,6 @@ class MiningArmsFinder {
             if (branchDrills.Count > 0) {
                 IMyShipDrill drill = branchDrills[0];
                 MatrixD toolMatrix = drill.WorldMatrix;
-                Matrix omat;
-                drill.Orientation.GetMatrix(out omat);
-                toolMatrix = MatrixD.Multiply(omat, toolMatrix);
-                Program.Echo("Drill " + toolMatrix.Forward.ToString("0.0"));
                 PistonArm piston_arm = PistonArm.FromGridBranch(Program, branch, toolMatrix);
                 MiningArms.Add(new MiningArm(Program, branchDrills, piston_arm));
             }
@@ -545,7 +597,7 @@ class GridGraphNode {
         Grid = grid;
     }
 
-    public List<GridBranch> GetBranches(List<GridGraphNode> parents = null) {
+    public List<GridBranch> GetBranches(Program Program, List<GridGraphNode> parents = null) {
         if (parents != null && Neighbors.Count == 1) {
             return new List<GridBranch>(new GridBranch[] { new GridBranch(Grid, Grid) });
         }
@@ -558,7 +610,7 @@ class GridGraphNode {
             }
             List<GridGraphNode> newParents = new List<GridGraphNode>(parents);
             newParents.Add(this);
-            List<GridBranch> neighborBranches = neighbor.Node.GetBranches(newParents);
+            List<GridBranch> neighborBranches = neighbor.Node.GetBranches(Program, newParents);
             foreach(GridBranch branch in neighborBranches) {
                 if (branch.End == null) {
                     continue;
@@ -569,6 +621,46 @@ class GridGraphNode {
             }
         }
         return branches;
+    }
+
+    public List<GridBranch> GetBranchesToTargets(Program Program, List<IMyCubeGrid> targets, List<GridGraphNode> parents = null) {
+        if (targets.Contains(Grid)) {
+            return new List<GridBranch>(new GridBranch[] { new GridBranch(Grid, Grid) });
+        }
+        if (parents != null && Neighbors.Count == 1) {
+            return new List<GridBranch>();
+        }
+        parents = parents ?? new List<GridGraphNode>();
+
+        List<GridBranch> branches = new List<GridBranch>();
+        foreach(GridGraphNeighbor neighbor in Neighbors) {
+            if (parents.Contains(neighbor.Node)) {
+                continue;
+            }
+            List<GridGraphNode> newParents = new List<GridGraphNode>(parents);
+            newParents.Add(this);
+            List<GridBranch> neighborBranches = neighbor.Node.GetBranchesToTargets(Program, targets, newParents);
+            foreach(GridBranch branch in neighborBranches) {
+                if (branch.End == null) {
+                    continue;
+                }
+                branch.Joints.Insert(0, neighbor.Joint);
+                branch.Start = Grid;
+                branches.Add(branch);
+            }
+        }
+        return branches;
+    }
+
+    public List<GridBranch> GetBranchesToDrills(Program Program) {
+        List<IMyShipDrill> drills = new List<IMyShipDrill>();
+        Program.GridTerminalSystem.GetBlocksOfType<IMyShipDrill>(drills);
+        HashSet<IMyCubeGrid> drillGrids = new HashSet<IMyCubeGrid>();
+        foreach(IMyShipDrill drill in drills) {
+            drillGrids.Add(drill.CubeGrid);
+        }
+
+        return GetBranchesToTargets(Program, drillGrids.ToList());
     }
 }
 
